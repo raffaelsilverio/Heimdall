@@ -18,6 +18,7 @@ type OpenAI struct {
 	apiKey     string
 	httpClient *http.Client
 	endpoint   string
+	name       string
 }
 
 func NewOpenAI(apiKey string) *OpenAI {
@@ -25,11 +26,11 @@ func NewOpenAI(apiKey string) *OpenAI {
 		apiKey:     strings.TrimSpace(apiKey),
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 		endpoint:   openAIResponsesURL,
+		name:       "openai",
 	}
 }
-
 func (p *OpenAI) Name() string {
-	return "openai"
+	return p.name
 }
 
 type openAIRequest struct {
