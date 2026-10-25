@@ -1,4 +1,3 @@
-
 package providers
 
 import (
@@ -34,7 +33,7 @@ func (p *OpenAI) Name() string {
 }
 
 type openAIRequest struct {
-	Model string `json:"model"`
+	Model string    `json:"model"`
 	Input []Message `json:"input"`
 }
 

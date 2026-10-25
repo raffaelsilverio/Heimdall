@@ -5,13 +5,13 @@ import (
 	"strings"
 )
 
-func New(name, apiKey string) (Provider, error){
+func New(name, apiKey string) (Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "opencode":
-		return NewOpenCodeProvider(apiKey), nil
+		return NewOpenCodeZen(apiKey), nil
 	case "openai":
-		return NewOpenAIProvider(apiKey), nil
+		return NewOpenAI(apiKey), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider %q: user openai or opencode zen", name)
+		return nil, fmt.Errorf("unsupported provider %q: use openai or opencode", name)
 	}
 }

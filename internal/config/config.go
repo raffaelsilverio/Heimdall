@@ -8,8 +8,8 @@ import (
 
 type Config struct {
 	Provider string
-	Model string
-	APIKey string
+	Model    string
+	APIKey   string
 }
 
 func LoadConfig(providerOverride, modelOverride string) (Config, error) {
@@ -22,7 +22,7 @@ func LoadConfig(providerOverride, modelOverride string) (Config, error) {
 	}
 
 	if provider == "" {
-		provider = "opencode"
+		provider = "openai"
 	}
 	model := strings.TrimSpace(os.Getenv("HEIMDALL_MODEL"))
 	if modelOverride != "" {
@@ -39,7 +39,7 @@ func LoadConfig(providerOverride, modelOverride string) (Config, error) {
 	case "openai":
 		config.APIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	default:
-		return Config{}, fmt.Errorf("unsupported provider %q: user openai or opencode zen", provider)
+		return Config{}, fmt.Errorf("unsupported provider %q: use openai or opencode", provider)
 	}
 	return config, nil
 }

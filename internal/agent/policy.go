@@ -1,0 +1,270 @@
+package agent
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/raffaelsilverio/Heimdall/internal/agent/contract"
+	"github.com/raffaelsilverio/Heimdall/internal/assessment"
+	"github.com/raffaelsilverio/Heimdall/internal/recon"
+)
+
+type ActionClass = contract.ActionClass
+
+const (
+	ActionPassive    = contract.ActionPassive
+	ActionSafeActive = contract.ActionSafeActive
+	ActionSensitive  = contract.ActionSensitive
+)
+
+type ProgramAgentPolicy = contract.ProgramAgentPolicy
+
+type ActionPolicyContext struct {
+	Program             assessment.Program
+	SourceReviewPending bool
+	EnabledSchedules    map[string]recon.StageLimits
+	ActionsUsed         int
+	RequestsUsed        int
+	Policy              ProgramAgentPolicy
+}
+
+type ActionProposal struct {
+	Stage          string   `json:"stage"`
+	ScopeHash      string   `json:"scope_hash"`
+	Targets        []string `json:"targets"`
+	EstimatedCalls int      `json:"estimated_calls"`
+	Rationale      string   `json:"rationale,omitempty"`
+}
+
+type AuthorizedAction struct {
+	ProgramID      string            `json:"program_id"`
+	ScopeHash      string            `json:"scope_hash"`
+	PolicyRevision int64             `json:"policy_revision"`
+	Stage          string            `json:"stage"`
+	Class          ActionClass       `json:"class"`
+	Targets        []string          `json:"targets"`
+	RequestBudget  int               `json:"request_budget"`
+	Limits         recon.StageLimits `json:"limits"`
+	ValidUntil     time.Time         `json:"valid_until"`
+	Proposal       ActionProposal    `json:"proposal"`
+}
+
+// ActionPolicy is the boundary an executor must call immediately before a
+// registered tool. It intentionally has no shell or arbitrary-command method.
+type ActionPolicy interface {
+	Authorize(context.Context, ActionPolicyContext, ActionProposal, time.Time) (AuthorizedAction, error)
+	Revalidate(context.Context, ActionPolicyContext, AuthorizedAction, time.Time) error
+}
+
+type ScopeActionPolicy struct{}
+
+func (ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPolicyContext, proposal ActionProposal, now time.Time) (AuthorizedAction, error) {
+	if err := ctx.Err(); err != nil {
+		return AuthorizedAction{}, err
+	}
+	now = now.UTC()
+	program := policyContext.Program
+	if program.ID == "" {
+		return AuthorizedAction{}, errors.New("action policy requires a program")
+	}
+	storedScopeHash, err := assessment.ScopeFingerprint(program.Scope)
+	if err != nil || storedScopeHash != program.ScopeHash {
+		return AuthorizedAction{}, errors.New("program scope is invalid or its fingerprint is stale")
+	}
+	if program.Status != assessment.ProgramActive {
+		return AuthorizedAction{}, fmt.Errorf("program is %s", program.Status)
+	}
+	if !program.ExpiresAt.After(now) {
+		return AuthorizedAction{}, errors.New("program authorization has expired")
+	}
+	if policyContext.SourceReviewPending {
+		return AuthorizedAction{}, errors.New("program has a pending source review")
+	}
+	if proposal.ScopeHash == "" || proposal.ScopeHash != program.ScopeHash {
+		return AuthorizedAction{}, errors.New("action scope hash is missing or stale")
+	}
+	if policyContext.Policy.Revision <= 0 {
+		return AuthorizedAction{}, errors.New("program agent policy revision is required")
+	}
+	stage := strings.ToLower(strings.TrimSpace(proposal.Stage))
+	class, err := actionClassForStage(stage)
+	if err != nil {
+		return AuthorizedAction{}, err
+	}
+	if !containsStage(policyContext.Policy.AllowedStages, stage) || !containsActionClass(policyContext.Policy.AllowedClasses, class) {
+		return AuthorizedAction{}, fmt.Errorf("stage %q / action class %q is not allowlisted for this program", stage, class)
+	}
+	limits, scheduleEnabled := policyContext.EnabledSchedules[stage]
+	if !scheduleEnabled {
+		return AuthorizedAction{}, fmt.Errorf("stage %q is not enabled for this program", stage)
+	}
+	if err := limits.Validate(); err != nil {
+		return AuthorizedAction{}, fmt.Errorf("stage %q has invalid or missing limits: %w", stage, err)
+	}
+	if policyContext.Policy.MaxActionsPerRun <= 0 || policyContext.Policy.MaxRequestsPerRun <= 0 ||
+		policyContext.Policy.MaxRequestsPerAction <= 0 || policyContext.Policy.MaxTargetsPerAction <= 0 {
+		return AuthorizedAction{}, errors.New("program agent policy has no positive action, request, and target budgets")
+	}
+	if policyContext.ActionsUsed < 0 || policyContext.ActionsUsed >= policyContext.Policy.MaxActionsPerRun {
+		return AuthorizedAction{}, errors.New("program agent action budget is exhausted")
+	}
+	if proposal.EstimatedCalls < 1 || proposal.EstimatedCalls > policyContext.Policy.MaxRequestsPerAction ||
+		policyContext.RequestsUsed < 0 || policyContext.RequestsUsed+proposal.EstimatedCalls > policyContext.Policy.MaxRequestsPerRun {
+		return AuthorizedAction{}, errors.New("proposed action exceeds the program request budget")
+	}
+
+	maxTargets := policyContext.Policy.MaxTargetsPerAction
+	if limits.MaxTargets < maxTargets {
+		maxTargets = limits.MaxTargets
+	}
+	targets, err := authorizedTargets(program.Scope, stage, proposal.Targets, maxTargets)
+	if err != nil {
+		return AuthorizedAction{}, err
+	}
+	validUntil := now.Add(time.Minute)
+	if program.ExpiresAt.Before(validUntil) {
+		validUntil = program.ExpiresAt
+	}
+	return AuthorizedAction{
+		ProgramID: program.ID, ScopeHash: program.ScopeHash, PolicyRevision: policyContext.Policy.Revision,
+		Stage: stage, Class: class, Targets: targets, RequestBudget: proposal.EstimatedCalls, Limits: limits,
+		ValidUntil: validUntil, Proposal: ActionProposal{
+			Stage: stage, ScopeHash: proposal.ScopeHash, Targets: append([]string(nil), proposal.Targets...),
+			EstimatedCalls: proposal.EstimatedCalls, Rationale: proposal.Rationale,
+		},
+	}, nil
+}
+
+func (policy ScopeActionPolicy) Revalidate(ctx context.Context, current ActionPolicyContext, grant AuthorizedAction, now time.Time) error {
+	if now.UTC().After(grant.ValidUntil) {
+		return errors.New("action grant expired; authorize again")
+	}
+	if current.Policy.Revision != grant.PolicyRevision {
+		return errors.New("program agent policy changed after authorization")
+	}
+	if current.Program.ID != grant.ProgramID || current.Program.ScopeHash != grant.ScopeHash {
+		return errors.New("program or scope changed after action authorization")
+	}
+	refreshed, err := policy.Authorize(ctx, current, grant.Proposal, now)
+	if err != nil {
+		return err
+	}
+	if refreshed.Class != grant.Class || refreshed.Stage != grant.Stage || refreshed.Limits != grant.Limits ||
+		refreshed.RequestBudget != grant.RequestBudget || !sameStrings(refreshed.Targets, grant.Targets) {
+		return errors.New("authorized action no longer matches the current policy")
+	}
+	return nil
+}
+
+func actionClassForStage(stage string) (ActionClass, error) {
+	class, ok := contract.ActionClassForStage(stage)
+	if !ok {
+		return "", fmt.Errorf("stage %q is not registered for agent actions", stage)
+	}
+	return class, nil
+}
+
+func authorizedTargets(scope assessment.Scope, stage string, proposed []string, maximum int) ([]string, error) {
+	if stage == recon.StageOSINT {
+		if len(proposed) != 0 {
+			return nil, errors.New("OSINT targets are derived from program scope; the agent cannot supply arbitrary seeds")
+		}
+		targets := make([]string, 0)
+		for _, domain := range scope.DiscoveryDomains() {
+			if scope.AllowsHost(domain) {
+				targets = append(targets, domain)
+			}
+		}
+		if len(targets) == 0 || len(targets) > maximum {
+			return nil, errors.New("OSINT seeds are empty or exceed the program target budget")
+		}
+		return targets, nil
+	}
+	if len(proposed) == 0 || len(proposed) > maximum {
+		return nil, errors.New("action targets are empty or exceed the program target budget")
+	}
+	set := make(map[string]struct{}, len(proposed))
+	for _, raw := range proposed {
+		target := strings.TrimSpace(raw)
+		if target == "" {
+			return nil, errors.New("action contains an empty target")
+		}
+		switch stage {
+		case recon.StageDNS:
+			host, err := assessment.NormalizeHost(target)
+			if err != nil || !scope.AllowsHost(host) {
+				return nil, fmt.Errorf("DNS target %q is outside the program scope", target)
+			}
+			target = host
+		case recon.StageWeb, recon.StageCrawl, recon.StageFFUF, recon.StageNuclei:
+			parsed, err := url.Parse(target)
+			if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
+				!scope.AllowsActiveURL(target) {
+				return nil, fmt.Errorf("URL target %q is outside the program's active scope", target)
+			}
+		case recon.StageNmap:
+			host, portText, err := net.SplitHostPort(target)
+			if err != nil {
+				return nil, fmt.Errorf("Nmap target %q must include an explicit authorized port", target)
+			}
+			port, err := strconv.ParseUint(portText, 10, 16)
+			if err != nil || port == 0 {
+				return nil, fmt.Errorf("Nmap target %q has an invalid port", target)
+			}
+			host, err = assessment.NormalizeHost(host)
+			if err != nil || !scope.AllowsActivePort(host, uint16(port)) {
+				return nil, fmt.Errorf("Nmap target %q is outside the program's authorized ports", target)
+			}
+			target = net.JoinHostPort(host, strconv.FormatUint(port, 10))
+		default:
+			return nil, fmt.Errorf("stage %q has no target validator", stage)
+		}
+		set[target] = struct{}{}
+	}
+	if len(set) > maximum {
+		return nil, errors.New("deduplicated action targets exceed the program target budget")
+	}
+	targets := make([]string, 0, len(set))
+	for target := range set {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	return targets, nil
+}
+
+func containsStage(stages []string, stage string) bool {
+	for _, candidate := range stages {
+		if strings.EqualFold(strings.TrimSpace(candidate), stage) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsActionClass(classes []ActionClass, class ActionClass) bool {
+	for _, candidate := range classes {
+		if candidate == class {
+			return true
+		}
+	}
+	return false
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
