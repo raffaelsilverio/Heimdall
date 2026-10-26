@@ -153,18 +153,27 @@ func (s Scope) AllowsHost(host string) bool {
 }
 
 func (s Scope) AllowsURL(rawURL string) bool {
+	parsed, host, port, valid := parseScopedURL(rawURL)
+	return valid && s.allowsParsedURL(parsed, host, port)
+}
+
+func parseScopedURL(rawURL string) (*url.URL, string, uint16, bool) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-		return false
+		return nil, "", 0, false
 	}
 	host, err := NormalizeHost(parsed.Hostname())
 	if err != nil {
-		return false
+		return nil, "", 0, false
 	}
 	port := effectivePort(parsed)
 	if port == 0 {
-		return false
+		return nil, "", 0, false
 	}
+	return parsed, host, port, true
+}
+
+func (s Scope) allowsParsedURL(parsed *url.URL, host string, port uint16) bool {
 	allowed := false
 	for _, entry := range s.Entries {
 		if !scopeEntryMatchesHost(entry, host) || !portAllowed(entry.Ports, port) {
@@ -190,18 +199,10 @@ func (s Scope) AllowsURL(rawURL string) bool {
 // AllowsActiveURL requires explicit port authorization for domain/IP/CIDR
 // entries. A URL entry authorizes only its scheme, effective port, and path.
 func (s Scope) AllowsActiveURL(rawURL string) bool {
-	if !s.AllowsURL(rawURL) {
+	parsed, host, port, valid := parseScopedURL(rawURL)
+	if !valid || !s.allowsParsedURL(parsed, host, port) {
 		return false
 	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	host, err := NormalizeHost(parsed.Hostname())
-	if err != nil {
-		return false
-	}
-	port := effectivePort(parsed)
 	for _, entry := range s.Entries {
 		if entry.Effect != ScopeInclude || !scopeEntryMatchesHost(entry, host) {
 			continue
@@ -387,17 +388,7 @@ func normalizeScopeValue(kind ScopeType, value string) (string, error) {
 		}
 		return normalizeDomain(value)
 	case ScopeURL:
-		parsed, err := url.Parse(value)
-		if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-			return "", errors.New("URL must be an absolute http or https URL")
-		}
-		if parsed.User != nil {
-			return "", errors.New("URL credentials are not allowed in scope")
-		}
-		parsed.Scheme = strings.ToLower(parsed.Scheme)
-		parsed.Host = strings.ToLower(parsed.Host)
-		parsed.Fragment = ""
-		return parsed.String(), nil
+		return normalizeScopeURL(value)
 	case ScopeIP:
 		address, err := netip.ParseAddr(value)
 		if err != nil {
@@ -415,6 +406,20 @@ func normalizeScopeValue(kind ScopeType, value string) (string, error) {
 	}
 }
 
+func normalizeScopeURL(value string) (string, error) {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", errors.New("URL must be an absolute http or https URL")
+	}
+	if parsed.User != nil {
+		return "", errors.New("URL credentials are not allowed in scope")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
 func normalizeDomain(value string) (string, error) {
 	value = normalizeHost(value)
 	if value == "" || strings.Contains(value, "/") || strings.Contains(value, ":") {
@@ -426,17 +431,24 @@ func normalizeDomain(value string) (string, error) {
 	if len(value) > 253 {
 		return "", errors.New("DNS name exceeds 253 characters")
 	}
+	if err := validateDomainLabels(value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func validateDomainLabels(value string) error {
 	for _, label := range strings.Split(value, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return "", errors.New("invalid DNS label")
+			return errors.New("invalid DNS label")
 		}
 		for _, r := range label {
-			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
-				return "", errors.New("DNS names must use ASCII letters, digits, and hyphens")
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return errors.New("DNS names must use ASCII letters, digits, and hyphens")
 			}
 		}
 	}
-	return value, nil
+	return nil
 }
 
 func normalizeHost(value string) string {

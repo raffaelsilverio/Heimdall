@@ -198,12 +198,11 @@ func prepareFFUFWordlistFiltered(path string, limit int, include func(string) bo
 	if err != nil {
 		return "", "", 0, nil, fmt.Errorf("open ffuf wordlist: %w", err)
 	}
-	defer input.Close()
+	defer closeFFUFWordlistInput(input, &err, &tempPath, &digest, &selected, &cleanup)
 	directory, err := os.MkdirTemp("", "heimdall-ffuf-")
 	if err != nil {
 		return "", "", 0, nil, fmt.Errorf("create ffuf work directory: %w", err)
 	}
-	_ = os.Chmod(directory, 0o700)
 	cleanup = func() { _ = os.RemoveAll(directory) }
 	tempPath = filepath.Join(directory, "wordlist.txt")
 	output, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -250,13 +249,23 @@ func prepareFFUFWordlistFiltered(path string, limit int, include func(string) bo
 	return tempPath, hex.EncodeToString(hasher.Sum(nil)), selected, cleanup, nil
 }
 
+func closeFFUFWordlistInput(input *os.File, resultErr *error, tempPath, digest *string, selected *int, cleanup *func()) {
+	if closeErr := input.Close(); closeErr != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close ffuf wordlist: %w", closeErr))
+		if *cleanup != nil {
+			(*cleanup)()
+		}
+		*tempPath, *digest, *selected, *cleanup = "", "", 0, nil
+	}
+}
+
 func safeFuzzSegment(word string) bool {
 	if word == "." || word == ".." || word == "" {
 		return false
 	}
 	for _, character := range word {
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' || character == '~') {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '-' && character != '_' && character != '.' && character != '~' {
 			return false
 		}
 	}

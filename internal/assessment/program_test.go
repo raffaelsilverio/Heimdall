@@ -1,6 +1,9 @@
 package assessment
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScopeAllowsHostAndExclusionsWin(t *testing.T) {
 	scope, err := NormalizeScope(Scope{Entries: []ScopeEntry{
@@ -73,6 +76,25 @@ func TestNormalizeScopeRequiresInclusion(t *testing.T) {
 	_, err := NormalizeScope(Scope{Entries: []ScopeEntry{{Effect: ScopeExclude, Type: ScopeDomain, Value: "example.com"}}})
 	if err == nil {
 		t.Fatal("expected an error for a scope without inclusions")
+	}
+}
+
+func TestNormalizeScopeRejectsInvalidDNSLabels(t *testing.T) {
+	invalidDomains := []string{
+		"-leading.example",
+		"trailing-.example",
+		"under_score.example",
+		strings.Repeat("a", 64) + ".example",
+	}
+	for _, domain := range invalidDomains {
+		t.Run(domain, func(t *testing.T) {
+			_, err := NormalizeScope(Scope{Entries: []ScopeEntry{{
+				Effect: ScopeInclude, Type: ScopeDomain, Value: domain,
+			}}})
+			if err == nil {
+				t.Fatalf("NormalizeScope accepted invalid DNS name %q", domain)
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/raffaelsilverio/Heimdall/internal/store"
@@ -29,12 +30,14 @@ func newAgentProgramListCommand[T any](
 		Use:   use,
 		Short: short,
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			items, err := list(cmd.Context(), database, args[0], limit)
 			if err != nil {
 				return err

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -131,12 +133,14 @@ func newProgramListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List saved programs",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			programs, err := database.ListPrograms(cmd.Context())
 			if err != nil {
 				return err
@@ -166,36 +170,44 @@ func newProgramShowCommand() *cobra.Command {
 				program.SourcePlatform, program.SourceURL, program.ScopeHash); err != nil {
 				return err
 			}
-			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "EFFECT\tTYPE\tVALUE\tPORTS"); err != nil {
-				return err
-			}
-			for _, entry := range program.Scope.Entries {
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%v\n", entry.Effect, entry.Type, entry.Value, entry.Ports); err != nil {
-					return err
-				}
-			}
-			if err := writer.Flush(); err != nil {
+			if err := writeProgramScope(cmd.OutOrStdout(), program.Scope); err != nil {
 				return err
 			}
 			schedules, err := database.ListStageSchedules(cmd.Context(), program.ID)
 			if err != nil {
 				return err
 			}
-			writer = tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "STAGE\tENABLED\tCRON\tTIMEZONE\tRATE/S\tCONCURRENCY\tMAX TARGETS\tTIMEOUT"); err != nil {
-				return err
-			}
-			for _, item := range schedules {
-				if _, err := fmt.Fprintf(writer, "%s\t%t\t%s\t%s\t%d\t%d\t%d\t%ds\n", item.Stage, item.Enabled,
-					item.CronExpression, item.Timezone, item.Limits.RateLimitPerSecond, item.Limits.MaxConcurrency,
-					item.Limits.MaxTargets, item.Limits.TimeoutSeconds); err != nil {
-					return err
-				}
-			}
-			return writer.Flush()
+			return writeProgramSchedules(cmd.OutOrStdout(), schedules)
 		},
 	}
+}
+
+func writeProgramScope(output io.Writer, scope assessment.Scope) error {
+	writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "EFFECT\tTYPE\tVALUE\tPORTS"); err != nil {
+		return err
+	}
+	for _, entry := range scope.Entries {
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%v\n", entry.Effect, entry.Type, entry.Value, entry.Ports); err != nil {
+			return err
+		}
+	}
+	return writer.Flush()
+}
+
+func writeProgramSchedules(output io.Writer, schedules []store.StageSchedule) error {
+	writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "STAGE\tENABLED\tCRON\tTIMEZONE\tRATE/S\tCONCURRENCY\tMAX TARGETS\tTIMEOUT"); err != nil {
+		return err
+	}
+	for _, item := range schedules {
+		if _, err := fmt.Fprintf(writer, "%s\t%t\t%s\t%s\t%d\t%d\t%d\t%ds\n", item.Stage, item.Enabled,
+			item.CronExpression, item.Timezone, item.Limits.RateLimitPerSecond, item.Limits.MaxConcurrency,
+			item.Limits.MaxTargets, item.Limits.TimeoutSeconds); err != nil {
+			return err
+		}
+	}
+	return writer.Flush()
 }
 
 func writePrograms(output io.Writer, programs []assessment.Program) error {
@@ -212,29 +224,31 @@ func writePrograms(output io.Writer, programs []assessment.Program) error {
 }
 
 func newProgramActivateCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "activate <program-id>",
-		Short: "Activate a program after validating authorization and scope",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			database, err := openStore(cmd)
-			if err != nil {
-				return err
-			}
-			defer database.Close()
-			if err := database.ActivateProgram(cmd.Context(), args[0], time.Now().UTC()); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Program %s is active. Enabled stages are queued for the daemon.\n", args[0])
-			return err
+	return newProgramStatusCommand(
+		"activate", "Activate a program after validating authorization and scope",
+		"Program %s is active. Enabled stages are queued for the daemon.\n",
+		func(ctx context.Context, database *store.Store, programID string, now time.Time) error {
+			return database.ActivateProgram(ctx, programID, now)
 		},
-	}
+	)
 }
 
 func newProgramPauseCommand() *cobra.Command {
+	return newProgramStatusCommand(
+		"pause", "Pause a program and its scheduled activity", "Program %s is paused.\n",
+		func(ctx context.Context, database *store.Store, programID string, now time.Time) error {
+			return database.PauseProgram(ctx, programID, now)
+		},
+	)
+}
+
+func newProgramStatusCommand(
+	action, short, successFormat string,
+	transition func(context.Context, *store.Store, string, time.Time) error,
+) *cobra.Command {
 	return &cobra.Command{
-		Use:   "pause <program-id>",
-		Short: "Pause a program and its scheduled activity",
+		Use:   action + " <program-id>",
+		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			database, err := openStore(cmd)
@@ -242,10 +256,10 @@ func newProgramPauseCommand() *cobra.Command {
 				return err
 			}
 			defer database.Close()
-			if err := database.PauseProgram(cmd.Context(), args[0], time.Now().UTC()); err != nil {
+			if err := transition(cmd.Context(), database, args[0], time.Now().UTC()); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Program %s is paused.\n", args[0])
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), successFormat, args[0])
 			return err
 		},
 	}

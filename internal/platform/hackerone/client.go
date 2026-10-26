@@ -176,7 +176,11 @@ func programHandle(sourceURL string) (string, error) {
 	if host != "hackerone.com" && host != "www.hackerone.com" {
 		return "", errors.New("HackerOne source URL must use hackerone.com")
 	}
-	path := strings.Trim(parsed.EscapedPath(), "/")
+	return parseHackerOneHandlePath(parsed.EscapedPath())
+}
+
+func parseHackerOneHandlePath(escapedPath string) (string, error) {
+	path := strings.Trim(escapedPath, "/")
 	if path == "" || strings.Contains(path, "/") {
 		return "", errors.New("HackerOne program URL must have a single handle path segment")
 	}
@@ -185,8 +189,8 @@ func programHandle(sourceURL string) (string, error) {
 		return "", errors.New("HackerOne program URL has an invalid handle")
 	}
 	for _, char := range handle {
-		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || char == '-' || char == '_') {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' && char != '_' {
 			return "", errors.New("HackerOne program handle contains unsupported characters")
 		}
 	}
@@ -352,7 +356,7 @@ func (c *Client) getList(ctx context.Context, path string, query url.Values, des
 	return nil
 }
 
-func (c *Client) getJSON(ctx context.Context, path string, query url.Values, destination any) error {
+func (c *Client) getJSON(ctx context.Context, path string, query url.Values, destination any) (resultErr error) {
 	endpoint, err := url.Parse(c.baseURL)
 	if err != nil {
 		return errors.New("invalid HackerOne API endpoint configuration")
@@ -373,7 +377,7 @@ func (c *Client) getJSON(ctx context.Context, path string, query url.Values, des
 		}
 		return fmt.Errorf("request HackerOne API %s: %w", path, err)
 	}
-	defer response.Body.Close()
+	defer closeHackerOneResponseBody(response.Body, &resultErr)
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("HackerOne API %s returned HTTP %d", path, response.StatusCode)
 	}
@@ -388,6 +392,12 @@ func (c *Client) getJSON(ctx context.Context, path string, query url.Values, des
 		return fmt.Errorf("decode HackerOne API %s response: %w", path, err)
 	}
 	return nil
+}
+
+func closeHackerOneResponseBody(body io.Closer, resultErr *error) {
+	if closeErr := body.Close(); closeErr != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close HackerOne API response body: %w", closeErr))
+	}
 }
 
 func waitContext(ctx context.Context, duration time.Duration) error {
@@ -449,20 +459,7 @@ func mapAsset(asset StructuredScope) (assessment.ScopeType, string, error) {
 	}
 	switch strings.ToLower(strings.TrimSpace(asset.AssetType)) {
 	case "url":
-		parsed, err := url.Parse(value)
-		if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-			return "", "", errors.New("URL asset is not an absolute HTTP(S) URL")
-		}
-		if parsed.RawQuery != "" || parsed.ForceQuery {
-			return "", "", errors.New("URL asset contains a query; Heimdall cannot safely enforce query-specific scope")
-		}
-		if strings.Contains(parsed.Hostname(), "*") {
-			return "", "", errors.New("URL asset uses a wildcard hostname that Heimdall cannot safely represent as a URL scope")
-		}
-		if strings.Contains(parsed.Path, "*") {
-			return "", "", errors.New("URL asset uses a wildcard path that Heimdall cannot safely represent")
-		}
-		return assessment.ScopeURL, value, nil
+		return mapURLAsset(value)
 	case "wildcard", "wildcard_domain":
 		return assessment.ScopeWildcardDomain, value, nil
 	case "domain", "hostname", "fqdn":
@@ -474,6 +471,23 @@ func mapAsset(asset StructuredScope) (assessment.ScopeType, string, error) {
 	default:
 		return "", "", errors.New("asset type is not supported by Heimdall's current web scope model")
 	}
+}
+
+func mapURLAsset(value string) (assessment.ScopeType, string, error) {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
+		return "", "", errors.New("URL asset is not an absolute HTTP(S) URL")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		return "", "", errors.New("URL asset contains a query; Heimdall cannot safely enforce query-specific scope")
+	}
+	if strings.Contains(parsed.Hostname(), "*") {
+		return "", "", errors.New("URL asset uses a wildcard hostname that Heimdall cannot safely represent as a URL scope")
+	}
+	if strings.Contains(parsed.Path, "*") {
+		return "", "", errors.New("URL asset uses a wildcard path that Heimdall cannot safely represent")
+	}
+	return assessment.ScopeURL, value, nil
 }
 
 func uniqueSorted(values []string) []string {

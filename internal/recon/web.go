@@ -401,10 +401,6 @@ func emptyToolConfig() (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("create isolated tool configuration directory: %w", err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
-		_ = os.RemoveAll(directory)
-		return "", nil, fmt.Errorf("restrict tool configuration directory: %w", err)
-	}
 	path := filepath.Join(directory, "config.yaml")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 		_ = os.RemoveAll(directory)

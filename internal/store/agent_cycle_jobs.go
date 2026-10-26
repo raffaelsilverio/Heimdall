@@ -348,15 +348,9 @@ func (s *Store) CompleteAgentCycleJob(ctx context.Context, lease AgentCycleLease
 	if lease.TaskID == "" || lease.ProgramID == "" || lease.Attempt < 1 {
 		return errors.New("valid agent cycle job lease is required")
 	}
-	outcome = strings.TrimSpace(strings.ToLower(outcome))
-	if outcome != "completed" && outcome != "failed" && outcome != "needs_review" && outcome != "cancelled" {
-		return errors.New("agent cycle outcome must be completed, failed, needs_review, or cancelled")
-	}
-	if len(resultJSON) == 0 {
-		resultJSON = []byte(`{}`)
-	}
-	if len(resultJSON) > 64<<10 || !json.Valid(resultJSON) {
-		return errors.New("agent cycle result must be valid JSON no larger than 64 KiB")
+	outcome, resultJSON, err := normalizeAgentCycleCompletion(outcome, resultJSON)
+	if err != nil {
+		return err
 	}
 	errorText := ""
 	if cause != nil {
@@ -380,6 +374,20 @@ func (s *Store) CompleteAgentCycleJob(ctx context.Context, lease AgentCycleLease
 		return errors.New("agent cycle lease was lost or expired before completion")
 	}
 	return nil
+}
+
+func normalizeAgentCycleCompletion(outcome string, resultJSON []byte) (string, []byte, error) {
+	outcome = strings.TrimSpace(strings.ToLower(outcome))
+	if outcome != "completed" && outcome != "failed" && outcome != "needs_review" && outcome != "cancelled" {
+		return "", nil, errors.New("agent cycle outcome must be completed, failed, needs_review, or cancelled")
+	}
+	if len(resultJSON) == 0 {
+		resultJSON = []byte(`{}`)
+	}
+	if len(resultJSON) > 64<<10 || !json.Valid(resultJSON) {
+		return "", nil, errors.New("agent cycle result must be valid JSON no larger than 64 KiB")
+	}
+	return outcome, resultJSON, nil
 }
 
 func (s *Store) ResolveAgentCycleJobReview(ctx context.Context, programID, taskID, decision, reviewer, note string, now time.Time) error {

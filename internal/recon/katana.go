@@ -232,27 +232,35 @@ func katanaExcludePatterns(scope assessment.Scope, target string) []string {
 		if entry.Effect != assessment.ScopeExclude || entry.Type != assessment.ScopeURL {
 			continue
 		}
-		excluded, err := url.Parse(entry.Value)
-		if err != nil || !strings.EqualFold(excluded.Scheme, parsed.Scheme) || assessmentHost(excluded.Hostname()) != targetHost || activeURLPort(excluded) != targetPort {
-			continue
+		pattern, ok := katanaExcludePatternForURL(parsed, targetHost, targetPort, entry.Value)
+		if ok {
+			patterns = append(patterns, pattern)
 		}
-		host := regexp.QuoteMeta(targetHost)
-		if strings.Contains(targetHost, ":") {
-			host = regexp.QuoteMeta("[" + targetHost + "]")
-		}
-		authority := host
-		if explicitPort := excluded.Port(); explicitPort != "" {
-			authority += ":" + regexp.QuoteMeta(explicitPort)
-		} else if (parsed.Scheme == "https" && targetPort == 443) || (parsed.Scheme == "http" && targetPort == 80) {
-			authority += "(?::" + strconv.Itoa(int(targetPort)) + ")?"
-		}
-		path := strings.TrimSuffix(excluded.Path, "/")
-		if path == "" {
-			path = "/"
-		}
-		patterns = append(patterns, "^"+regexp.QuoteMeta(strings.ToLower(parsed.Scheme))+"://"+authority+regexp.QuoteMeta(path)+`(?:/.*)?(?:\?.*)?$`)
 	}
 	return patterns
+}
+
+func katanaExcludePatternForURL(target *url.URL, targetHost string, targetPort uint16, rawExcluded string) (string, bool) {
+	excluded, err := url.Parse(rawExcluded)
+	if err != nil || !strings.EqualFold(excluded.Scheme, target.Scheme) ||
+		assessmentHost(excluded.Hostname()) != targetHost || activeURLPort(excluded) != targetPort {
+		return "", false
+	}
+	host := regexp.QuoteMeta(targetHost)
+	if strings.Contains(targetHost, ":") {
+		host = regexp.QuoteMeta("[" + targetHost + "]")
+	}
+	authority := host
+	if explicitPort := excluded.Port(); explicitPort != "" {
+		authority += ":" + regexp.QuoteMeta(explicitPort)
+	} else if (target.Scheme == "https" && targetPort == 443) || (target.Scheme == "http" && targetPort == 80) {
+		authority += "(?::" + strconv.Itoa(int(targetPort)) + ")?"
+	}
+	path := strings.TrimSuffix(excluded.Path, "/")
+	if path == "" {
+		path = "/"
+	}
+	return "^" + regexp.QuoteMeta(strings.ToLower(target.Scheme)) + "://" + authority + regexp.QuoteMeta(path) + `(?:/.*)?(?:\?.*)?$`, true
 }
 
 func parseKatanaOutput(output []byte, scope assessment.Scope, version string, maxTargets int) ([]Observation, []byte, error) {

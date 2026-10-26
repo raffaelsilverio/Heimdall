@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,4 +48,8 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 		return nil, fmt.Errorf("home directory is empty")
 	}
 	return store.Open(cmd.Context(), filepath.Join(home, "heimdall.db"))
+}
+
+func closeStoreOnReturn(database *store.Store, resultErr *error) {
+	*resultErr = errors.Join(*resultErr, database.Close())
 }

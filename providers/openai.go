@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,7 +56,7 @@ type openAIError struct {
 func (p *OpenAI) Generate(
 	ctx context.Context,
 	request Request,
-) (Response, error) {
+) (response Response, err error) {
 	if p.apiKey == "" {
 		return Response{}, fmt.Errorf("OpenAI API key is not configured")
 	}
@@ -95,7 +96,7 @@ func (p *OpenAI) Generate(
 	if err != nil {
 		return Response{}, fmt.Errorf("send OpenAI request: %w", err)
 	}
-	defer httpResponse.Body.Close()
+	defer closeProviderResponseBody(httpResponse.Body, &err)
 
 	responseBody, err := io.ReadAll(
 		io.LimitReader(httpResponse.Body, 4<<20),
@@ -104,21 +105,25 @@ func (p *OpenAI) Generate(
 		return Response{}, fmt.Errorf("read response: %w", err)
 	}
 
-	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
+	return decodeOpenAIResponse(httpResponse.StatusCode, responseBody)
+}
+
+func decodeOpenAIResponse(statusCode int, responseBody []byte) (Response, error) {
+	if statusCode < 200 || statusCode >= 300 {
 		var apiError openAIError
 
 		if json.Unmarshal(responseBody, &apiError) == nil &&
 			apiError.Error.Message != "" {
 			return Response{}, fmt.Errorf(
 				"OpenAI API returned HTTP %d: %s",
-				httpResponse.StatusCode,
+				statusCode,
 				apiError.Error.Message,
 			)
 		}
 
 		return Response{}, fmt.Errorf(
 			"OpenAI API returned HTTP %d",
-			httpResponse.StatusCode,
+			statusCode,
 		)
 	}
 
@@ -142,4 +147,10 @@ func (p *OpenAI) Generate(
 	}
 
 	return Response{Content: text.String()}, nil
+}
+
+func closeProviderResponseBody(body io.Closer, resultErr *error) {
+	if closeErr := body.Close(); closeErr != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close OpenAI response body: %w", closeErr))
+	}
 }

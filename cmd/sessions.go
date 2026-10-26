@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -119,12 +120,14 @@ func newSessionCloseCommand() *cobra.Command {
 		Use:   "close <session-id>",
 		Short: "Close an open interactive session",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			if err := database.CloseSession(cmd.Context(), args[0], time.Now().UTC()); err != nil {
 				return err
 			}

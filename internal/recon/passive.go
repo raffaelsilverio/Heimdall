@@ -233,14 +233,8 @@ func normalizeEndpoint(rawURL string) (string, string, error) {
 		return "", "", err
 	}
 	port := parsed.Port()
-	if port != "" {
-		parsedPort, err := strconv.ParseUint(port, 10, 16)
-		if err != nil {
-			return "", "", fmt.Errorf("invalid port: %w", err)
-		}
-		if parsedPort == 0 {
-			return "", "", errors.New("port must be between 1 and 65535")
-		}
+	if err := validateEndpointPort(port); err != nil {
+		return "", "", err
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	if port == "" || (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
@@ -255,6 +249,20 @@ func normalizeEndpoint(rawURL string) (string, string, error) {
 	parsed.ForceQuery = false
 	parsed.Fragment = ""
 	return parsed.String(), host, nil
+}
+
+func validateEndpointPort(port string) error {
+	if port == "" {
+		return nil
+	}
+	parsedPort, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return fmt.Errorf("invalid port: %w", err)
+	}
+	if parsedPort == 0 {
+		return errors.New("port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func writeJSONLine(output *bytes.Buffer, value any) {

@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/raffaelsilverio/Heimdall/internal/assessment"
 	"github.com/raffaelsilverio/Heimdall/internal/platform/hackerone"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 	"github.com/spf13/cobra"
@@ -217,50 +218,41 @@ func writeProgramSourceSnapshot(output io.Writer, snapshot store.ProgramSourceSn
 			}
 		}
 	}
-	if snapshot.CandidateScope != nil {
-		writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(writer, "\nCANDIDATE EFFECT\tTYPE\tVALUE\tPORTS"); err != nil {
+	const maxScopeRows = 1000
+	if err := writeProgramSourceScope(output, "\nCANDIDATE EFFECT\tTYPE\tVALUE\tPORTS", snapshot.CandidateScope,
+		fmt.Sprintf("[showing first %d candidate entries; use --json for the complete stored source]", maxScopeRows)); err != nil {
+		return err
+	}
+	if err := writeProgramSourceScope(output, "\nAPPROVED EFFECT\tTYPE\tVALUE\tPORTS", snapshot.AppliedScope,
+		fmt.Sprintf("[showing first %d approved entries; `heimdall program show %s` prints the complete current scope]", maxScopeRows, snapshot.ProgramID)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeProgramSourceScope(output io.Writer, heading string, scope *assessment.Scope, overflowMessage string) error {
+	if scope == nil {
+		return nil
+	}
+	const maxScopeRows = 1000
+	writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, heading); err != nil {
+		return err
+	}
+	for index, entry := range scope.Entries {
+		if index >= maxScopeRows {
+			break
+		}
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%v\n", entry.Effect, entry.Type, safeSourceText(entry.Value), entry.Ports); err != nil {
 			return err
-		}
-		const maxScopeRows = 1000
-		for index, entry := range snapshot.CandidateScope.Entries {
-			if index >= maxScopeRows {
-				break
-			}
-			if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%v\n", entry.Effect, entry.Type, safeSourceText(entry.Value), entry.Ports); err != nil {
-				return err
-			}
-		}
-		if err := writer.Flush(); err != nil {
-			return err
-		}
-		if len(snapshot.CandidateScope.Entries) > maxScopeRows {
-			if _, err := fmt.Fprintf(output, "[showing first %d candidate entries; use --json for the complete stored source]\n", maxScopeRows); err != nil {
-				return err
-			}
 		}
 	}
-	if snapshot.AppliedScope != nil {
-		writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(writer, "\nAPPROVED EFFECT\tTYPE\tVALUE\tPORTS"); err != nil {
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if len(scope.Entries) > maxScopeRows {
+		if _, err := fmt.Fprintln(output, overflowMessage); err != nil {
 			return err
-		}
-		const maxScopeRows = 1000
-		for index, entry := range snapshot.AppliedScope.Entries {
-			if index >= maxScopeRows {
-				break
-			}
-			if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%v\n", entry.Effect, entry.Type, safeSourceText(entry.Value), entry.Ports); err != nil {
-				return err
-			}
-		}
-		if err := writer.Flush(); err != nil {
-			return err
-		}
-		if len(snapshot.AppliedScope.Entries) > maxScopeRows {
-			if _, err := fmt.Fprintf(output, "[showing first %d approved entries; `heimdall program show %s` prints the complete current scope]\n", maxScopeRows, snapshot.ProgramID); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

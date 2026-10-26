@@ -63,21 +63,7 @@ func (s *Store) SetStageSchedule(ctx context.Context, programID, stage, expressi
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("load existing stage limits: %w", err)
 	}
-	if len(configuredLimits) > 0 {
-		provided := configuredLimits[0]
-		if provided.RateLimitPerSecond != 0 {
-			limits.RateLimitPerSecond = provided.RateLimitPerSecond
-		}
-		if provided.MaxConcurrency != 0 {
-			limits.MaxConcurrency = provided.MaxConcurrency
-		}
-		if provided.MaxTargets != 0 {
-			limits.MaxTargets = provided.MaxTargets
-		}
-		if provided.TimeoutSeconds != 0 {
-			limits.TimeoutSeconds = provided.TimeoutSeconds
-		}
-	}
+	limits = mergeConfiguredStageLimits(limits, configuredLimits)
 	if err := limits.Validate(); err != nil {
 		return err
 	}
@@ -101,6 +87,26 @@ func (s *Store) SetStageSchedule(ctx context.Context, programID, stage, expressi
 		return fmt.Errorf("save stage schedule: %w", err)
 	}
 	return nil
+}
+
+func mergeConfiguredStageLimits(limits recon.StageLimits, configured []recon.StageLimits) recon.StageLimits {
+	if len(configured) == 0 {
+		return limits
+	}
+	provided := configured[0]
+	if provided.RateLimitPerSecond != 0 {
+		limits.RateLimitPerSecond = provided.RateLimitPerSecond
+	}
+	if provided.MaxConcurrency != 0 {
+		limits.MaxConcurrency = provided.MaxConcurrency
+	}
+	if provided.MaxTargets != 0 {
+		limits.MaxTargets = provided.MaxTargets
+	}
+	if provided.TimeoutSeconds != 0 {
+		limits.TimeoutSeconds = provided.TimeoutSeconds
+	}
+	return limits
 }
 
 func (s *Store) InScopeHostSeeds(ctx context.Context, programID, scopeHash string) ([]string, error) {

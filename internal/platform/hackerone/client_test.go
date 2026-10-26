@@ -3,7 +3,9 @@ package hackerone
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -162,6 +164,45 @@ func TestProgramHandleAndURLScopeRejectAmbiguousInputs(t *testing.T) {
 		if _, _, err := mapAsset(StructuredScope{AssetType: "URL", AssetIdentifier: value}); err == nil {
 			t.Errorf("mapAsset accepted ambiguous URL %q", value)
 		}
+	}
+}
+
+type responseCloseFailureRoundTripper struct {
+	body io.ReadCloser
+}
+
+func (transport responseCloseFailureRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       transport.body,
+		Request:    request,
+	}, nil
+}
+
+type responseCloseFailureBody struct {
+	reader *strings.Reader
+	err    error
+}
+
+func (body *responseCloseFailureBody) Read(data []byte) (int, error) { return body.reader.Read(data) }
+func (body *responseCloseFailureBody) Close() error                  { return body.err }
+
+func TestGetJSONReturnsResponseBodyCloseError(t *testing.T) {
+	closeErr := errors.New("simulated response close failure")
+	client, err := NewClient("api-user", "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.baseURL = "https://api.hackerone.com"
+	client.http = &http.Client{Transport: responseCloseFailureRoundTripper{body: &responseCloseFailureBody{
+		reader: strings.NewReader(`{"data":{}}`),
+		err:    closeErr,
+	}}}
+	var destination map[string]any
+	err = client.getJSON(context.Background(), "/v1/test", nil, &destination)
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("getJSON error = %v, want response-body close error", err)
 	}
 }
 

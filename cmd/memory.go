@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -27,31 +29,9 @@ func newMemoryAddCommand() *cobra.Command {
 		Long:  "Memory is always scoped to one program. Source references are checked to belong to that same program. Use --content-stdin to avoid putting sensitive notes in shell history.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !contentStdin && strings.TrimSpace(content) == "" {
-				return fmt.Errorf("memory content is required; provide --content or --content-stdin")
-			}
-			if contentStdin {
-				if content != "" {
-					return fmt.Errorf("use either --content or --content-stdin, not both")
-				}
-				body, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), (64<<10)+1))
-				if err != nil {
-					return fmt.Errorf("read memory content from stdin: %w", err)
-				}
-				content = string(body)
-			}
-			var expiresAt *time.Time
-			if strings.TrimSpace(expiresAtValue) != "" {
-				parsed, err := time.Parse(time.RFC3339, expiresAtValue)
-				if err != nil {
-					return fmt.Errorf("parse --expires-at as RFC3339: %w", err)
-				}
-				expiresAt = &parsed
-			}
-			var verifiedAt *time.Time
-			if verified {
-				now := time.Now().UTC()
-				verifiedAt = &now
+			content, expiresAt, verifiedAt, err := prepareMemoryInput(cmd, content, contentStdin, expiresAtValue, verified)
+			if err != nil {
+				return err
 			}
 			database, err := openStore(cmd)
 			if err != nil {
@@ -87,18 +67,50 @@ func newMemoryAddCommand() *cobra.Command {
 	return command
 }
 
+func prepareMemoryInput(cmd *cobra.Command, content string, contentStdin bool, expiresAtValue string, verified bool) (string, *time.Time, *time.Time, error) {
+	if !contentStdin && strings.TrimSpace(content) == "" {
+		return "", nil, nil, fmt.Errorf("memory content is required; provide --content or --content-stdin")
+	}
+	if contentStdin {
+		if content != "" {
+			return "", nil, nil, fmt.Errorf("use either --content or --content-stdin, not both")
+		}
+		body, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), (64<<10)+1))
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("read memory content from stdin: %w", err)
+		}
+		content = string(body)
+	}
+	var expiresAt *time.Time
+	if strings.TrimSpace(expiresAtValue) != "" {
+		parsed, err := time.Parse(time.RFC3339, expiresAtValue)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("parse --expires-at as RFC3339: %w", err)
+		}
+		expiresAt = &parsed
+	}
+	var verifiedAt *time.Time
+	if verified {
+		now := time.Now().UTC()
+		verifiedAt = &now
+	}
+	return content, expiresAt, verifiedAt, nil
+}
+
 func newMemoryListCommand() *cobra.Command {
 	var limit int
 	command := &cobra.Command{
 		Use:   "list <program-id>",
 		Short: "List active, unexpired memory for one program",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			memories, err := database.ListProgramMemories(cmd.Context(), args[0], limit, time.Now().UTC())
 			if err != nil {
 				return err
@@ -154,29 +166,30 @@ func newMemoryShowCommand() *cobra.Command {
 }
 
 func newMemoryArchiveCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "archive <program-id> <memory-id>",
-		Short: "Archive one memory record without deleting its provenance",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			database, err := openStore(cmd)
-			if err != nil {
-				return err
-			}
-			defer database.Close()
-			if err := database.ArchiveProgramMemory(cmd.Context(), args[0], args[1], time.Now().UTC()); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Archived memory %s from program %s.\n", args[1], args[0])
-			return err
+	return newMemoryStateCommand(
+		"archive", "Archive one memory record without deleting its provenance", "Archived",
+		func(ctx context.Context, database *store.Store, programID, memoryID string, now time.Time) error {
+			return database.ArchiveProgramMemory(ctx, programID, memoryID, now)
 		},
-	}
+	)
 }
 
 func newMemoryRestoreCommand() *cobra.Command {
+	return newMemoryStateCommand(
+		"restore", "Restore an archived, unexpired memory record", "Restored",
+		func(ctx context.Context, database *store.Store, programID, memoryID string, now time.Time) error {
+			return database.RestoreProgramMemory(ctx, programID, memoryID, now)
+		},
+	)
+}
+
+func newMemoryStateCommand(
+	action, short, pastTense string,
+	transition func(context.Context, *store.Store, string, string, time.Time) error,
+) *cobra.Command {
 	return &cobra.Command{
-		Use:   "restore <program-id> <memory-id>",
-		Short: "Restore an archived, unexpired memory record",
+		Use:   action + " <program-id> <memory-id>",
+		Short: short,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			database, err := openStore(cmd)
@@ -184,10 +197,10 @@ func newMemoryRestoreCommand() *cobra.Command {
 				return err
 			}
 			defer database.Close()
-			if err := database.RestoreProgramMemory(cmd.Context(), args[0], args[1], time.Now().UTC()); err != nil {
+			if err := transition(cmd.Context(), database, args[0], args[1], time.Now().UTC()); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Restored memory %s in program %s.\n", args[1], args[0])
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s memory %s in program %s.\n", pastTense, args[1], args[0])
 			return err
 		},
 	}

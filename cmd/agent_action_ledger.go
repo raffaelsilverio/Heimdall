@@ -13,12 +13,12 @@ func newAgentActionRunsCommand() *cobra.Command {
 		Use:   "action-runs <program-id>",
 		Short: "List durable agent action runs for one program",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeStoreOnReturn(database, &resultErr)
 			runs, err := database.ListAgentActionRuns(cmd.Context(), args[0], 100)
 			if err != nil {
 				return err
@@ -33,12 +33,12 @@ func newAgentActionRunShowCommand() *cobra.Command {
 		Use:   "action-run <program-id> <run-id>",
 		Short: "Show one action run and its reservations/results",
 		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeStoreOnReturn(database, &resultErr)
 			run, err := database.GetAgentActionRun(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return err

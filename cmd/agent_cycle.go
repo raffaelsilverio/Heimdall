@@ -23,7 +23,7 @@ func newAgentCycleCommand() *cobra.Command {
 		Short: "Run a bounded adaptive cycle using only native HTTP HEAD probes",
 		Long:  "The model proposes one next action at a time from scope, policy, bounded results, and optional same-program memory. Every action is policy-checked and metered. This is synchronous, not daemon-dispatched. --send-context consents to model egress; --confirm-active-requests consents to in-scope HEAD requests.",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			if !sendContext {
 				return errors.New("adaptive planning sends structured program scope/policy to the model; pass --send-context to confirm")
 			}
@@ -51,7 +51,7 @@ func newAgentCycleCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeStoreOnReturn(database, &resultErr)
 			result, err := (execution.Executor{
 				Store: database, Registry: recon.NewDefaultAgentActionRegistry(),
 			}).RunAdaptive(cmd.Context(), args[0], actionRunID, model, cfg.Model, includeMemory, maxSteps, time.Now().UTC())

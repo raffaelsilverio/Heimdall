@@ -100,9 +100,10 @@ func (d Daemon) RunCycle(ctx context.Context, now time.Time) (int, error) {
 		runErr := d.Store.ValidateRunAuthorization(runContext, job.RunID, time.Now().UTC())
 		if runErr == nil {
 			targets := []string(nil)
-			if job.Stage == recon.StageWeb || job.Stage == recon.StageNmap {
+			switch job.Stage {
+			case recon.StageWeb, recon.StageNmap:
 				targets, runErr = d.Store.InScopeHostSeeds(runContext, job.Program.ID, job.Program.ScopeHash)
-			} else if job.Stage == recon.StageCrawl || job.Stage == recon.StageFFUF || job.Stage == recon.StageNuclei {
+			case recon.StageCrawl, recon.StageFFUF, recon.StageNuclei:
 				targets, runErr = d.Store.InScopeEndpointSeeds(runContext, job.Program.ID, job.Program.ScopeHash)
 			}
 			if runErr == nil {

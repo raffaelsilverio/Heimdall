@@ -3,6 +3,8 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,5 +111,44 @@ func TestOpenAIGenerateUnauthorized(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "Invalid API key") {
 		t.Errorf("expected API error message, got: %v", err)
+	}
+}
+
+type closeErrorRoundTripper struct {
+	body io.ReadCloser
+}
+
+func (transport closeErrorRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       transport.body,
+		Request:    request,
+	}, nil
+}
+
+type closeErrorBody struct {
+	reader *strings.Reader
+	err    error
+}
+
+func (body *closeErrorBody) Read(data []byte) (int, error) { return body.reader.Read(data) }
+func (body *closeErrorBody) Close() error                  { return body.err }
+
+func TestOpenAIGenerateReturnsResponseBodyCloseError(t *testing.T) {
+	closeErr := errors.New("simulated close failure")
+	provider := &OpenAI{
+		apiKey: "test-key",
+		httpClient: &http.Client{Transport: closeErrorRoundTripper{body: &closeErrorBody{
+			reader: strings.NewReader(`{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}`),
+			err:    closeErr,
+		}}},
+		endpoint: "https://provider.invalid/responses",
+	}
+	_, err := provider.Generate(context.Background(), Request{
+		Model: "test-model", Messages: []Message{{Role: "user", Content: "hello"}},
+	})
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("Generate error = %v, want response-body close error", err)
 	}
 }

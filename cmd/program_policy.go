@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -21,12 +22,14 @@ func newProgramPolicyShowCommand() *cobra.Command {
 		Use:   "show <program-id>",
 		Short: "Show the deny-by-default agent policy for one program",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			policy, err := database.GetProgramAgentPolicy(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -44,7 +47,7 @@ func newProgramPolicySetCommand() *cobra.Command {
 		Short: "Replace one program's explicit agent allowlist and budgets",
 		Long:  "This saves policy only; it does not start an agent or execute tools. Use `program policy reset` to restore deny-all.",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			if len(stages) == 0 || len(classes) == 0 {
 				return fmt.Errorf("--allow-stage and --allow-class are required; use `program policy reset` for deny-all")
 			}
@@ -59,7 +62,9 @@ func newProgramPolicySetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			saved, err := database.SetProgramAgentPolicy(cmd.Context(), args[0], policy, time.Now().UTC())
 			if err != nil {
 				return err
@@ -83,12 +88,14 @@ func newProgramPolicyResetCommand() *cobra.Command {
 		Use:   "reset <program-id>",
 		Short: "Restore the program's deny-all agent policy",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer func() {
+				resultErr = errors.Join(resultErr, database.Close())
+			}()
 			policy, err := database.SetProgramAgentPolicy(cmd.Context(), args[0], contract.ProgramAgentPolicy{}, time.Now().UTC())
 			if err != nil {
 				return err

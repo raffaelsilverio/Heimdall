@@ -20,12 +20,12 @@ func newProgramAutomationShowCommand() *cobra.Command {
 		Use:   "show <program-id>",
 		Short: "Show a program's deny-by-default autonomous-cycle consent",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeStoreOnReturn(database, &resultErr)
 			consent, err := database.GetProgramAgentAutomation(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -44,7 +44,7 @@ func newProgramAutomationSetCommand() *cobra.Command {
 		Short: "Enable bounded daemon-cycle consent for one program",
 		Long:  "Persist time-bounded consent for sending structured program context to one configured provider/model and for active requests. This does not launch or backfill a cycle; future eligible material events may enter the daemon queue.",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			if !allowModelContextEgress || !allowActiveRequests {
 				return fmt.Errorf("explicitly pass --allow-model-context-egress and --allow-active-requests to enable automation")
 			}
@@ -63,7 +63,7 @@ func newProgramAutomationSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeStoreOnReturn(database, &resultErr)
 			consent, err := database.SetProgramAgentAutomation(cmd.Context(), args[0], store.ProgramAgentAutomation{
 				Enabled: true, PlannerProvider: cfg.Provider, PlannerModel: cfg.Model,
 				ContextEgressExpiresAt: &expiresAt, AllowModelContextEgress: allowModelContextEgress,
@@ -102,12 +102,12 @@ func newProgramAutomationDisableCommand() *cobra.Command {
 		Use:   "disable <program-id>",
 		Short: "Revoke persisted adaptive-cycle consent for one program",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
 			database, err := openStore(cmd)
 			if err != nil {
 				return err
 			}
-			defer database.Close()
+			defer closeStoreOnReturn(database, &resultErr)
 			consent, err := database.DisableProgramAgentAutomation(cmd.Context(), args[0], reviewedBy, reason, time.Now().UTC())
 			if err != nil {
 				return err
