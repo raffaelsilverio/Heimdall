@@ -23,10 +23,15 @@ type AgentEventTriageRunner interface {
 	RunCycle(ctx context.Context, now time.Time) (int, error)
 }
 
+type AdaptiveAgentCycleRunner interface {
+	RunCycle(ctx context.Context, now time.Time) (int, error)
+}
+
 type Daemon struct {
 	Store         Repository
 	Runner        recon.StageRunner
 	AgentTriage   AgentEventTriageRunner
+	AgentCycles   AdaptiveAgentCycleRunner
 	PollInterval  time.Duration
 	LeaseDuration time.Duration
 	Logger        *slog.Logger
@@ -74,6 +79,13 @@ func (d Daemon) RunCycle(ctx context.Context, now time.Time) (int, error) {
 		processed += triaged
 		if err != nil {
 			failures = append(failures, fmt.Errorf("triage material recon events: %w", err))
+		}
+	}
+	if d.AgentCycles != nil {
+		cycles, err := d.AgentCycles.RunCycle(ctx, now.UTC())
+		processed += cycles
+		if err != nil {
+			failures = append(failures, fmt.Errorf("run consented adaptive agent cycles: %w", err))
 		}
 	}
 	jobs, err := d.Store.ClaimDueSchedules(ctx, now, leaseDuration)

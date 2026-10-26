@@ -16,6 +16,14 @@ import (
 
 const maxAgentEventTriageAttempts = 5
 
+const (
+	maxTriageMemoryCandidates = 20
+	maxTriageMemoryItems      = 5
+	maxTriageMemoryTitleBytes = 200
+	maxTriageMemoryBodyBytes  = 1200
+	maxTriageMemoryTotalBytes = 8 << 10
+)
+
 // Compatibility aliases keep the persistence API convenient while shared
 // application contracts live outside the SQLite adapter package.
 type AgentEventTaskLease = contract.TaskLease
@@ -192,7 +200,12 @@ type triageQueryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func loadAgentEventTriageContext(ctx context.Context, queryer triageQueryRower, lease AgentEventTaskLease, now time.Time) (AgentEventTriageContext, error) {
+type triageQueryer interface {
+	triageQueryRower
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func loadAgentEventTriageContext(ctx context.Context, queryer triageQueryer, lease AgentEventTaskLease, now time.Time) (AgentEventTriageContext, error) {
 	if lease.ID == "" || lease.Attempt < 1 {
 		return AgentEventTriageContext{}, errors.New("valid agent event triage lease is required")
 	}
@@ -236,7 +249,71 @@ func loadAgentEventTriageContext(ctx context.Context, queryer triageQueryRower, 
 		contextData.AuthorizationExpiresAt = &value
 		contextData.AuthorizationValid = value.After(now)
 	}
+	if !contextData.SourceReviewPending && contextData.EventScopeHash == contextData.CurrentScopeHash {
+		contextData.Memory, err = loadCurrentTriageMemory(ctx, queryer, contextData.ProgramID, contextData.EventScopeHash, now)
+		if err != nil {
+			return AgentEventTriageContext{}, err
+		}
+	}
 	return contextData, nil
+}
+
+func loadCurrentTriageMemory(ctx context.Context, queryer triageQueryer, programID, scopeHash string, now time.Time) ([]contract.TriageMemoryItem, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT m.id, m.kind, m.title, m.content, m.source_kind, m.confidence
+		FROM program_memories m JOIN programs p ON p.id = m.program_id
+		WHERE m.program_id = ? AND p.scope_hash = ? AND m.status = 'active'
+		AND (m.expires_at IS NULL OR m.expires_at > ?)
+		AND (m.scope_hash IS NULL OR m.scope_hash = p.scope_hash)
+		AND NOT EXISTS (SELECT 1 FROM program_source_snapshots ps WHERE ps.program_id = p.id AND ps.status = 'pending')
+		AND (m.source_kind != 'source_snapshot' OR (m.source_hash IS NOT NULL AND m.source_hash = (
+			SELECT ps.source_hash FROM program_source_snapshots ps WHERE ps.program_id = p.id
+			AND ps.status IN ('approved', 'unchanged') ORDER BY ps.fetched_at DESC, ps.rowid DESC LIMIT 1)))
+		ORDER BY m.observed_at DESC, m.created_at DESC, m.id LIMIT ?`,
+		programID, scopeHash, now.UTC().Unix(), maxTriageMemoryCandidates)
+	if err != nil {
+		return nil, fmt.Errorf("query current program memory for triage: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]contract.TriageMemoryItem, 0, maxTriageMemoryItems)
+	totalBytes := 0
+	for rows.Next() {
+		var item contract.TriageMemoryItem
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Title, &item.Content, &item.SourceKind, &item.Confidence); err != nil {
+			return nil, fmt.Errorf("scan current program memory for triage: %w", err)
+		}
+		item.Title = boundedMemoryBriefText(item.Title, maxTriageMemoryTitleBytes)
+		item.Content = boundedMemoryBriefText(item.Content, maxTriageMemoryBodyBytes)
+		itemBytes := len(item.ID) + len(item.Kind) + len(item.Title) + len(item.Content) + len(item.SourceKind)
+		if item.Title == "" || item.Content == "" {
+			continue
+		}
+		if len(items) >= maxTriageMemoryItems || totalBytes+itemBytes > maxTriageMemoryTotalBytes {
+			break
+		}
+		items = append(items, item)
+		totalBytes += itemBytes
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate current program memory for triage: %w", err)
+	}
+	return items, nil
+}
+
+func boundedMemoryBriefText(value string, maximum int) string {
+	value = strings.ToValidUTF8(strings.TrimSpace(value), "�")
+	if len(value) <= maximum {
+		return value
+	}
+	const suffix = " [truncated]"
+	maximum -= len(suffix)
+	for maximum > 0 && !utf8.RuneStart(value[maximum]) {
+		maximum--
+	}
+	if maximum <= 0 {
+		return ""
+	}
+	return value[:maximum] + suffix
 }
 
 func (s *Store) CompleteAgentEventTriage(ctx context.Context, lease AgentEventTaskLease, output AgentEventTriageOutput, now time.Time) (AgentEventTriageResult, error) {
@@ -263,6 +340,7 @@ func (s *Store) CompleteAgentEventTriage(ctx context.Context, lease AgentEventTa
 			AuthorizationValid     bool       `json:"authorization_valid_at_triage"`
 			AuthorizationExpiresAt *time.Time `json:"authorization_expires_at,omitempty"`
 		} `json:"current_program"`
+		Memory []contract.TriageMemoryItem `json:"memory,omitempty"`
 	}
 	if err := json.Unmarshal(output.BriefJSON, &briefIdentity); err != nil ||
 		briefIdentity.ProgramID != output.ProgramID || briefIdentity.EventID != output.EventID ||
@@ -291,7 +369,8 @@ func (s *Store) CompleteAgentEventTriage(ctx context.Context, lease AgentEventTa
 	if output.ProgramStatus != current.ProgramStatus || output.CurrentScopeHash != current.CurrentScopeHash ||
 		output.ScopeMatchesEvent != (output.EventScopeHash == current.CurrentScopeHash) ||
 		output.SourceReviewPending != current.SourceReviewPending || output.AuthorizationValid != current.AuthorizationValid ||
-		!sameOptionalTime(output.AuthorizationExpiresAt, current.AuthorizationExpiresAt) {
+		!sameOptionalTime(output.AuthorizationExpiresAt, current.AuthorizationExpiresAt) ||
+		!sameTriageMemoryItems(briefIdentity.Memory, current.Memory) {
 		return AgentEventTriageResult{}, ErrAgentEventTriageContextChanged
 	}
 
@@ -367,6 +446,18 @@ func (s *Store) CompleteAgentEventTriage(ctx context.Context, lease AgentEventTa
 		return AgentEventTriageResult{}, fmt.Errorf("commit agent event triage: %w", err)
 	}
 	return result, nil
+}
+
+func sameTriageMemoryItems(left, right []contract.TriageMemoryItem) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func sameOptionalTime(left, right *time.Time) bool {

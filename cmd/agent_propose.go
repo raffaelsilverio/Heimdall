@@ -112,8 +112,14 @@ const (
 )
 
 func boundedPlanMemory(programID string, memories []store.ProgramMemory) []agent.PlanMemoryItem {
+	items, _ := selectBoundedPlanMemory(programID, memories)
+	return items
+}
+
+func selectBoundedPlanMemory(programID string, memories []store.ProgramMemory) ([]agent.PlanMemoryItem, []string) {
 	programID = strings.TrimSpace(programID)
 	result := make([]agent.PlanMemoryItem, 0, maxProposalMemoryItems)
+	ids := make([]string, 0, maxProposalMemoryItems)
 	totalBytes := 0
 	for _, memory := range memories {
 		if len(result) >= maxProposalMemoryItems {
@@ -136,9 +142,10 @@ func boundedPlanMemory(programID string, memories []store.ProgramMemory) []agent
 		result = append(result, agent.PlanMemoryItem{
 			Kind: kind, Title: title, Content: content, SourceKind: sourceKind, Confidence: memory.Confidence,
 		})
+		ids = append(ids, memory.ID)
 		totalBytes += itemBytes
 	}
-	return result
+	return result, ids
 }
 
 func truncateUTF8(value string, maximum int) string {

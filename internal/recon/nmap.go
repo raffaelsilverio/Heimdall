@@ -251,7 +251,7 @@ func parseNmapXML(data []byte, target nmapTarget, version string) ([]Observation
 				Service  string `json:"service,omitempty"`
 			}{target.host, protocol, port.PortID, "open", service})
 			if artifact.Len() > maxArtifactOutput {
-				return nil, nil, fmt.Errorf("Nmap sanitized artifact exceeds %d bytes", maxArtifactOutput)
+				return nil, nil, fmt.Errorf("nmap sanitized artifact exceeds %d bytes", maxArtifactOutput)
 			}
 		}
 	}

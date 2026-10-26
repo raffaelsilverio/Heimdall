@@ -68,11 +68,11 @@ func normalizeProgramSource(platform, rawURL string) (string, string, error) {
 		}
 	case "bugcrowd":
 		if host != "bugcrowd.com" && !strings.HasSuffix(host, ".bugcrowd.com") {
-			return "", "", errors.New("Bugcrowd program URL must use bugcrowd.com")
+			return "", "", errors.New("program URL must use bugcrowd.com")
 		}
 	case "intigriti":
 		if host != "intigriti.com" && !strings.HasSuffix(host, ".intigriti.com") {
-			return "", "", errors.New("Intigriti program URL must use intigriti.com")
+			return "", "", errors.New("program URL must use intigriti.com")
 		}
 	case "custom":
 	case "manual":

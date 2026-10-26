@@ -44,7 +44,7 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 		return nil, fmt.Errorf("read Heimdall home: %w", err)
 	}
 	if strings.TrimSpace(home) == "" {
-		return nil, fmt.Errorf("Heimdall home directory is empty")
+		return nil, fmt.Errorf("home directory is empty")
 	}
 	return store.Open(cmd.Context(), filepath.Join(home, "heimdall.db"))
 }

@@ -30,6 +30,15 @@ type blockingStageRunner struct {
 	started chan struct{}
 }
 
+type adaptiveCycleStub struct {
+	calls int
+}
+
+func (r *adaptiveCycleStub) RunCycle(context.Context, time.Time) (int, error) {
+	r.calls++
+	return 1, nil
+}
+
 func (r blockingStageRunner) Run(ctx context.Context, _ recon.StageRequest) (recon.Collection, error) {
 	close(r.started)
 	<-ctx.Done()
@@ -95,6 +104,24 @@ func TestRunCycleStoresBaselineAndMaterialChange(t *testing.T) {
 func TestDailyScheduleDefaultCanBeOverridden(t *testing.T) {
 	if schedule.DefaultOSINTCron != "0 3 * * *" {
 		t.Fatalf("default OSINT cron = %q, want daily at 03:00", schedule.DefaultOSINTCron)
+	}
+}
+
+func TestDaemonRunsAdaptiveCycleWorkerWhenInjected(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "heimdall.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cycleRunner := &adaptiveCycleStub{}
+	daemon := Daemon{
+		Store: database, Runner: &sequenceCollector{}, AgentCycles: cycleRunner,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	processed, err := daemon.RunCycle(ctx, time.Now().UTC())
+	if err != nil || processed != 1 || cycleRunner.calls != 1 {
+		t.Fatalf("daemon did not call adaptive cycle runner: processed=%d calls=%d err=%v", processed, cycleRunner.calls, err)
 	}
 }
 

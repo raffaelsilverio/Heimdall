@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +28,8 @@ type ActionPolicyContext struct {
 	EnabledSchedules    map[string]recon.StageLimits
 	ActionsUsed         int
 	RequestsUsed        int
+	MaxProposals        int
+	RecentResults       []PlanActionObservation
 	Policy              ProgramAgentPolicy
 }
 
@@ -172,71 +170,7 @@ func actionClassForStage(stage string) (ActionClass, error) {
 }
 
 func authorizedTargets(scope assessment.Scope, stage string, proposed []string, maximum int) ([]string, error) {
-	if stage == recon.StageOSINT {
-		if len(proposed) != 0 {
-			return nil, errors.New("OSINT targets are derived from program scope; the agent cannot supply arbitrary seeds")
-		}
-		targets := make([]string, 0)
-		for _, domain := range scope.DiscoveryDomains() {
-			if scope.AllowsHost(domain) {
-				targets = append(targets, domain)
-			}
-		}
-		if len(targets) == 0 || len(targets) > maximum {
-			return nil, errors.New("OSINT seeds are empty or exceed the program target budget")
-		}
-		return targets, nil
-	}
-	if len(proposed) == 0 || len(proposed) > maximum {
-		return nil, errors.New("action targets are empty or exceed the program target budget")
-	}
-	set := make(map[string]struct{}, len(proposed))
-	for _, raw := range proposed {
-		target := strings.TrimSpace(raw)
-		if target == "" {
-			return nil, errors.New("action contains an empty target")
-		}
-		switch stage {
-		case recon.StageDNS:
-			host, err := assessment.NormalizeHost(target)
-			if err != nil || !scope.AllowsHost(host) {
-				return nil, fmt.Errorf("DNS target %q is outside the program scope", target)
-			}
-			target = host
-		case recon.StageWeb, recon.StageCrawl, recon.StageFFUF, recon.StageNuclei:
-			parsed, err := url.Parse(target)
-			if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
-				!scope.AllowsActiveURL(target) {
-				return nil, fmt.Errorf("URL target %q is outside the program's active scope", target)
-			}
-		case recon.StageNmap:
-			host, portText, err := net.SplitHostPort(target)
-			if err != nil {
-				return nil, fmt.Errorf("Nmap target %q must include an explicit authorized port", target)
-			}
-			port, err := strconv.ParseUint(portText, 10, 16)
-			if err != nil || port == 0 {
-				return nil, fmt.Errorf("Nmap target %q has an invalid port", target)
-			}
-			host, err = assessment.NormalizeHost(host)
-			if err != nil || !scope.AllowsActivePort(host, uint16(port)) {
-				return nil, fmt.Errorf("Nmap target %q is outside the program's authorized ports", target)
-			}
-			target = net.JoinHostPort(host, strconv.FormatUint(port, 10))
-		default:
-			return nil, fmt.Errorf("stage %q has no target validator", stage)
-		}
-		set[target] = struct{}{}
-	}
-	if len(set) > maximum {
-		return nil, errors.New("deduplicated action targets exceed the program target budget")
-	}
-	targets := make([]string, 0, len(set))
-	for target := range set {
-		targets = append(targets, target)
-	}
-	sort.Strings(targets)
-	return targets, nil
+	return contract.AuthorizeTargets(scope, stage, proposed, maximum)
 }
 
 func containsStage(stages []string, stage string) bool {

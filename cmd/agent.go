@@ -13,30 +13,7 @@ import (
 
 func newAgentCommand() *cobra.Command {
 	command := &cobra.Command{Use: "agent", Short: "Process supervised agent-event work"}
-	command.AddCommand(newAgentTriageCommand(), newAgentTasksCommand(), newAgentRetryTriageCommand(), newAgentPlanCommand(), newAgentProposeCommand())
-	return command
-}
-
-func newAgentTasksCommand() *cobra.Command {
-	var limit int
-	command := &cobra.Command{
-		Use:   "tasks <program-id>",
-		Short: "List agent tasks for one program",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			database, err := openStore(cmd)
-			if err != nil {
-				return err
-			}
-			defer database.Close()
-			tasks, err := database.ListAgentTaskStatuses(cmd.Context(), args[0], limit)
-			if err != nil {
-				return err
-			}
-			return writeAgentTaskStatuses(cmd.OutOrStdout(), tasks)
-		},
-	}
-	command.Flags().IntVar(&limit, "limit", 20, "Maximum task records to list (1-100)")
+	command.AddCommand(newAgentTriageCommand(), newAgentTasksCommand(), newAgentRetryTriageCommand(), newAgentPlanCommand(), newAgentProposeCommand(), newAgentExecuteCommand(), newAgentCycleCommand(), newAgentCycleJobsCommand(), newAgentCycleJobReviewCommand(), newAgentActionRunsCommand(), newAgentActionRunShowCommand(), newAgentActionReviewCommand())
 	return command
 }
 

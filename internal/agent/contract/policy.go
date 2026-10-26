@@ -3,8 +3,13 @@ package contract
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/raffaelsilverio/Heimdall/internal/assessment"
 )
 
 type ActionClass string
@@ -38,6 +43,80 @@ func ActionClassForStage(stage string) (ActionClass, bool) {
 	default:
 		return "", false
 	}
+}
+
+// AuthorizeTargets normalizes and validates targets using only the program's
+// current scope. OSINT seeds are always derived from scope, never model input.
+func AuthorizeTargets(scope assessment.Scope, stage string, proposed []string, maximum int) ([]string, error) {
+	stage = strings.ToLower(strings.TrimSpace(stage))
+	if maximum < 1 {
+		return nil, errors.New("target budget must be positive")
+	}
+	if stage == "osint" {
+		if len(proposed) != 0 {
+			return nil, errors.New("OSINT targets are derived from program scope; the agent cannot supply arbitrary seeds")
+		}
+		targets := make([]string, 0)
+		for _, domain := range scope.DiscoveryDomains() {
+			if scope.AllowsHost(domain) {
+				targets = append(targets, domain)
+			}
+		}
+		if len(targets) == 0 || len(targets) > maximum {
+			return nil, errors.New("OSINT seeds are empty or exceed the program target budget")
+		}
+		return targets, nil
+	}
+	if len(proposed) == 0 || len(proposed) > maximum {
+		return nil, errors.New("action targets are empty or exceed the program target budget")
+	}
+	set := make(map[string]struct{}, len(proposed))
+	for _, raw := range proposed {
+		target := strings.TrimSpace(raw)
+		if target == "" {
+			return nil, errors.New("action contains an empty target")
+		}
+		switch stage {
+		case "dns":
+			host, err := assessment.NormalizeHost(target)
+			if err != nil || !scope.AllowsHost(host) {
+				return nil, fmt.Errorf("DNS target %q is outside the program scope", target)
+			}
+			target = host
+		case "web", "crawl", "ffuf", "nuclei":
+			parsed, err := url.Parse(target)
+			if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" ||
+				!scope.AllowsActiveURL(target) {
+				return nil, fmt.Errorf("URL target %q is outside the program's active scope", target)
+			}
+		case "nmap":
+			host, portText, err := net.SplitHostPort(target)
+			if err != nil {
+				return nil, fmt.Errorf("target %q for nmap must include an explicit authorized port", target)
+			}
+			port, err := strconv.ParseUint(portText, 10, 16)
+			if err != nil || port == 0 {
+				return nil, fmt.Errorf("target %q for nmap has an invalid port", target)
+			}
+			host, err = assessment.NormalizeHost(host)
+			if err != nil || !scope.AllowsActivePort(host, uint16(port)) {
+				return nil, fmt.Errorf("target %q for nmap is outside the program's authorized ports", target)
+			}
+			target = net.JoinHostPort(host, strconv.FormatUint(port, 10))
+		default:
+			return nil, fmt.Errorf("stage %q has no target validator", stage)
+		}
+		set[target] = struct{}{}
+	}
+	if len(set) > maximum {
+		return nil, errors.New("deduplicated action targets exceed the program target budget")
+	}
+	targets := make([]string, 0, len(set))
+	for target := range set {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	return targets, nil
 }
 
 func NormalizeProgramAgentPolicy(policy ProgramAgentPolicy) (ProgramAgentPolicy, error) {

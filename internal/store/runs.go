@@ -170,6 +170,18 @@ func (s *Store) CompleteRun(ctx context.Context, runID string, collection recon.
 	if _, err := tx.ExecContext(ctx, `UPDATE runs SET status = ?, finished_at = ?, error = NULLIF(?, '') WHERE id = ?`, status, now.Unix(), errorText, runID); err != nil {
 		return nil, fmt.Errorf("finish run: %w", err)
 	}
+	if status == "complete" {
+		if err := captureRunFindingCandidates(ctx, tx, programID, runID, stage, scopeHash, observations, now); err != nil {
+			return nil, err
+		}
+	}
+	// Material events already enter the dedicated event-triage/handoff queue.
+	// Quiet runs get a compact factual summary instead, never a finding verdict.
+	if status == "complete" && !hasMaterialChangeEvent(events) {
+		if err := captureQuietRunMemory(ctx, tx, programID, runID, stage, scopeHash, observations, now); err != nil {
+			return nil, err
+		}
+	}
 	if trigger == "schedule" {
 		if _, err := tx.ExecContext(ctx, `UPDATE stage_schedules SET lease_until = NULL, last_run_at = ? WHERE program_id = ? AND stage = ?`, now.Unix(), programID, stage); err != nil {
 			return nil, fmt.Errorf("release schedule lease: %w", err)
@@ -179,6 +191,15 @@ func (s *Store) CompleteRun(ctx context.Context, runID string, collection recon.
 		return nil, fmt.Errorf("commit run completion: %w", err)
 	}
 	return events, nil
+}
+
+func hasMaterialChangeEvent(events []ChangeEvent) bool {
+	for _, event := range events {
+		if event.Material {
+			return true
+		}
+	}
+	return false
 }
 
 type ArtifactRecord struct {

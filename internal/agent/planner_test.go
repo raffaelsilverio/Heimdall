@@ -94,6 +94,30 @@ func TestGenerateActionProposalsFailsClosedBeforeModelCall(t *testing.T) {
 	}
 }
 
+func TestGenerateNextProposalReceivesOnlyBoundedPriorResultAndRemainingBudgets(t *testing.T) {
+	now := time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC)
+	policyContext := activePolicyContext(t, now)
+	policyContext.MaxProposals = 1
+	policyContext.RecentResults = []PlanActionObservation{{
+		Stage: recon.StageWeb, Target: "https://app.example.test/health", Outcome: "HEAD status=204",
+	}}
+	model := &fakePlanModel{response: providers.Response{Content: `{"actions":[{"stage":"web","scope_hash":"` +
+		policyContext.Program.ScopeHash + `","targets":["https://app.example.test/next"],"estimated_calls":1}]}`}}
+	proposals, err := GenerateActionProposals(context.Background(), model, "test-model", policyContext, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proposals) != 1 {
+		t.Fatalf("expected one next proposal, got %+v", proposals)
+	}
+	userContext := model.request.Messages[1].Content
+	for _, expected := range []string{"recent_results", "HEAD status=204", "/health", `"actions_remaining":3`, `"requests_remaining":17`, `"max_actions_this_response":1`} {
+		if !strings.Contains(userContext, expected) {
+			t.Fatalf("adaptive prompt omitted %q: %s", expected, userContext)
+		}
+	}
+}
+
 func TestPolicyAwarePlannerFiltersGeneratedProposalsWithoutExecuting(t *testing.T) {
 	now := time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC)
 	policyContext := activePolicyContext(t, now)

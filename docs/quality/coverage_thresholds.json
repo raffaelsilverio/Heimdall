@@ -1,0 +1,15 @@
+{
+  "packages": {
+    "cmd": 50.0,
+    "internal/agent": 65.0,
+    "internal/agent/execution": 60.0,
+    "internal/assessment": 55.0,
+    "internal/config": 90.0,
+    "internal/platform/hackerone": 65.0,
+    "internal/recon": 50.0,
+    "internal/schedule": 35.0,
+    "internal/scheduler": 65.0,
+    "internal/store": 55.0,
+    "providers": 60.0
+  }
+}

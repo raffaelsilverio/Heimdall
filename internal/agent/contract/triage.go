@@ -37,6 +37,16 @@ type TriageContext struct {
 	SourceReviewPending    bool
 	AuthorizationValid     bool
 	AuthorizationExpiresAt *time.Time
+	Memory                 []TriageMemoryItem
+}
+
+type TriageMemoryItem struct {
+	ID         string  `json:"id"`
+	Kind       string  `json:"kind"`
+	Title      string  `json:"title"`
+	Content    string  `json:"content"`
+	SourceKind string  `json:"source_kind"`
+	Confidence float64 `json:"confidence"`
 }
 
 type TriageOutput struct {

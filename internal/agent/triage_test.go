@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raffaelsilverio/Heimdall/internal/agent/contract"
 	"github.com/raffaelsilverio/Heimdall/internal/assessment"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
@@ -80,6 +81,33 @@ func TestTriageWorkerCreatesScopedMemoryAndSessionHandoff(t *testing.T) {
 	ctx := context.Background()
 	start := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
 	program, event := createMaterialReconEvent(t, database, start)
+	if _, err := database.AddProgramMemory(ctx, store.AddProgramMemoryParams{
+		ProgramID: program.ID, Kind: "hypothesis", Title: "Current same-program note",
+		Content: "Prior same-program hypothesis for triage context.", SourceKind: "operator", ScopeHash: program.ScopeHash, Confidence: 0.6,
+	}, start.Add(90*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddProgramMemory(ctx, store.AddProgramMemoryParams{
+		ProgramID: program.ID, Kind: "fact", Title: "Stale scope note",
+		Content: "This note belongs to another scope revision.", SourceKind: "operator",
+		ScopeHash: strings.Repeat("a", 64), Confidence: 1,
+	}, start.Add(91*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	otherProgram, err := database.CreateProgram(ctx, store.CreateProgramParams{
+		Name: "Other triage program", AuthorizationReference: "internal:triage-other",
+		ExpiresAt: start.Add(24 * time.Hour), Timezone: "UTC",
+		Scope: assessment.Scope{Entries: []assessment.ScopeEntry{{Type: assessment.ScopeDomain, Value: "other.test"}}},
+	}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddProgramMemory(ctx, store.AddProgramMemoryParams{
+		ProgramID: otherProgram.ID, Kind: "fact", Title: "Foreign secret note",
+		Content: "Cross-program data must never enter this handoff.", SourceKind: "operator", Confidence: 1,
+	}, start.Add(92*time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	if err := database.PauseProgram(ctx, program.ID, start.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +143,16 @@ func TestTriageWorkerCreatesScopedMemoryAndSessionHandoff(t *testing.T) {
 	if brief["event_id"] != event.ID || !strings.Contains(messages[0].Content, "no LLM call or tool execution occurred") {
 		t.Fatalf("triage handoff omitted event provenance or safety note: %s", messages[0].Content)
 	}
+	var triageBrief struct {
+		Memory []contract.TriageMemoryItem `json:"memory"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Content), &triageBrief); err != nil {
+		t.Fatal(err)
+	}
+	if len(triageBrief.Memory) < 2 || !strings.Contains(messages[0].Content, "Current same-program note") ||
+		strings.Contains(messages[0].Content, "Foreign secret note") || strings.Contains(messages[0].Content, "Stale scope note") {
+		t.Fatalf("triage memory briefing leaked cross-program or stale notes, or omitted current notes: %+v", triageBrief.Memory)
+	}
 	if !strings.Contains(messages[0].Content, `"status":"paused"`) {
 		t.Fatalf("triage brief did not reflect the current paused program state: %s", messages[0].Content)
 	}
@@ -123,14 +161,21 @@ func TestTriageWorkerCreatesScopedMemoryAndSessionHandoff(t *testing.T) {
 	}
 
 	memories, err := database.ListProgramMemories(ctx, program.ID, 10, start.Add(3*time.Minute))
-	if err != nil || len(memories) != 1 {
+	if err != nil {
 		t.Fatalf("program handoff memory missing: memories=%+v err=%v", memories, err)
 	}
-	if memories[0].Kind != "handoff" || memories[0].SourceKind != "event" || memories[0].SourceID != event.ID || memories[0].ScopeHash != program.ScopeHash {
-		t.Fatalf("handoff memory lost per-program provenance: %+v", memories[0])
+	var handoff *store.ProgramMemory
+	for index := range memories {
+		if memories[index].Kind == "handoff" && memories[index].SourceKind == "event" && memories[index].SourceID == event.ID {
+			handoff = &memories[index]
+			break
+		}
+	}
+	if handoff == nil || handoff.ScopeHash != program.ScopeHash {
+		t.Fatalf("handoff memory lost per-program provenance: %+v", memories)
 	}
 	search, err := database.SearchProgramMemories(ctx, program.ID, "new.example.test", 10, start.Add(3*time.Minute))
-	if err != nil || len(search) != 1 || search[0].ID != memories[0].ID {
+	if err != nil || len(search) != 1 || search[0].ID != handoff.ID {
 		t.Fatalf("event handoff was not searchable within its program: results=%+v err=%v", search, err)
 	}
 	processed, err = worker.RunCycle(ctx, start.Add(4*time.Minute))
@@ -182,8 +227,42 @@ func TestExpiredTriageLeaseCannotCommitAfterReclaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(handoffs) != 1 || handoffs[0].SourceID != event.ID {
+	var matchingHandoffs int
+	for _, memory := range handoffs {
+		if memory.Kind == "handoff" && memory.SourceKind == "event" && memory.SourceID == event.ID {
+			matchingHandoffs++
+		}
+	}
+	if matchingHandoffs != 1 {
 		t.Fatalf("triage created duplicate or missing handoff memories: %+v", handoffs)
+	}
+}
+
+func TestTriageRejectsMemoryBriefThatChangedBeforeCommit(t *testing.T) {
+	database := openTriageStore(t)
+	ctx := context.Background()
+	start := time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC)
+	program, _ := createMaterialReconEvent(t, database, start)
+	leases, err := database.ClaimAgentEventTasks(ctx, start.Add(2*time.Minute), time.Minute, 1)
+	if err != nil || len(leases) != 1 {
+		t.Fatalf("claim triage task: leases=%+v err=%v", leases, err)
+	}
+	triageContext, err := database.LoadAgentEventTriageContext(ctx, leases[0], start.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := BuildAgentEventTriageOutput(triageContext, start.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddProgramMemory(ctx, store.AddProgramMemoryParams{
+		ProgramID: program.ID, Kind: "fact", Title: "Added during triage",
+		Content: "Memory changed after the briefing snapshot.", SourceKind: "operator", ScopeHash: program.ScopeHash, Confidence: 1,
+	}, start.Add(2*time.Minute+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CompleteAgentEventTriage(ctx, leases[0], output, start.Add(2*time.Minute+2*time.Second)); err != store.ErrAgentEventTriageContextChanged {
+		t.Fatalf("stale memory briefing completion error = %v, want context-changed", err)
 	}
 }
 

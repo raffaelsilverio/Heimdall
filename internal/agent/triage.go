@@ -106,6 +106,7 @@ func BuildAgentEventTriageOutput(source contract.TriageContext, capturedAt time.
 			SourceReviewPending: source.SourceReviewPending, AuthorizationValid: source.AuthorizationValid,
 			AuthorizationExpiresAt: source.AuthorizationExpiresAt,
 		},
+		Memory: append([]contract.TriageMemoryItem(nil), source.Memory...),
 		Notice: "Deterministic event context only; no LLM call or tool execution occurred. This record does not grant authorization.",
 	}
 	briefJSON, err := json.Marshal(brief)
@@ -130,16 +131,17 @@ func BuildAgentEventTriageOutput(source contract.TriageContext, capturedAt time.
 }
 
 type eventTriageBrief struct {
-	SchemaVersion  int                     `json:"schema_version"`
-	ProgramID      string                  `json:"program_id"`
-	EventID        string                  `json:"event_id"`
-	RunID          string                  `json:"run_id"`
-	Stage          string                  `json:"stage"`
-	EventScopeHash string                  `json:"event_scope_hash"`
-	CapturedAt     time.Time               `json:"captured_at"`
-	Event          eventTriageDetails      `json:"event"`
-	CurrentProgram eventTriageProgramState `json:"current_program"`
-	Notice         string                  `json:"notice"`
+	SchemaVersion  int                         `json:"schema_version"`
+	ProgramID      string                      `json:"program_id"`
+	EventID        string                      `json:"event_id"`
+	RunID          string                      `json:"run_id"`
+	Stage          string                      `json:"stage"`
+	EventScopeHash string                      `json:"event_scope_hash"`
+	CapturedAt     time.Time                   `json:"captured_at"`
+	Event          eventTriageDetails          `json:"event"`
+	CurrentProgram eventTriageProgramState     `json:"current_program"`
+	Memory         []contract.TriageMemoryItem `json:"memory,omitempty"`
+	Notice         string                      `json:"notice"`
 }
 
 type eventTriageDetails struct {

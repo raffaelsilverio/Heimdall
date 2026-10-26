@@ -28,6 +28,7 @@ const (
 	CategoryHostname     = "hostname"
 	CategoryHTTPEndpoint = "http_endpoint"
 	CategoryVulnFinding  = "vulnerability_finding"
+	CategoryHTTPProbe    = "http_probe_result"
 	maxArtifactOutput    = 32 << 20
 )
 
@@ -85,10 +86,12 @@ type StageLimits struct {
 }
 
 type StageRequest struct {
-	Program assessment.Program
-	Stage   string
-	Targets []string
-	Limits  StageLimits
+	Program       assessment.Program
+	Stage         string
+	Targets       []string
+	Limits        StageLimits
+	RequestMeter  RequestMeter
+	RequestBudget int
 }
 
 func DefaultStageLimits(stage string) StageLimits {

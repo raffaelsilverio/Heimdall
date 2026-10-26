@@ -1,0 +1,42 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - gosec
+    - dupl
+    - funlen
+    - gocognit
+    - gocyclo
+  settings:
+    dupl:
+      threshold: 100
+    errcheck:
+      exclude-functions:
+        - (*sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+    funlen:
+      lines: 100
+      statements: 50
+      ignore-comments: true
+    gocognit:
+      min-complexity: 20
+    gocyclo:
+      min-complexity: 15
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocognit
+          - gocyclo
+          - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

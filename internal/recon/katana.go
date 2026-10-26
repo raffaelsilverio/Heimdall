@@ -51,10 +51,10 @@ func (c KatanaCollector) Collect(ctx context.Context, request StageRequest) (Col
 	}
 	targets, scopes, outOfScopes := katanaTargets(request.Program.Scope, request.Targets)
 	if len(targets) == 0 {
-		return collection, errors.New("Katana has no in-scope URL targets; run web inventory first or configure an in-scope URL")
+		return collection, errors.New("no in-scope katana URL targets; run web inventory first or configure an in-scope URL")
 	}
 	if len(targets) > limits.MaxTargets {
-		return collection, fmt.Errorf("Katana has %d targets, exceeding the configured limit of %d", len(targets), limits.MaxTargets)
+		return collection, fmt.Errorf("katana has %d targets, exceeding the configured limit of %d", len(targets), limits.MaxTargets)
 	}
 	runner := c.Runner
 	if runner == nil {
@@ -293,14 +293,14 @@ func parseKatanaOutput(output []byte, scope assessment.Scope, version string, ma
 		observations = append(observations, Observation{Category: CategoryHTTPEndpoint, StableKey: endpoint,
 			Value: `{"source":"katana"}`, Source: "katana", ToolVersion: version})
 		if len(observations) > maxTargets {
-			return nil, nil, fmt.Errorf("Katana produced more than %d in-scope endpoints", maxTargets)
+			return nil, nil, fmt.Errorf("katana produced more than %d in-scope endpoints", maxTargets)
 		}
 		writeJSONLine(&artifact, struct {
 			URL  string `json:"url"`
 			Host string `json:"host"`
 		}{URL: endpoint, Host: host})
 		if artifact.Len() > maxArtifactOutput {
-			return nil, nil, fmt.Errorf("Katana sanitized artifact exceeds %d bytes", maxArtifactOutput)
+			return nil, nil, fmt.Errorf("katana sanitized artifact exceeds %d bytes", maxArtifactOutput)
 		}
 	}
 	if err := scanner.Err(); err != nil {

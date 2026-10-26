@@ -258,7 +258,7 @@ func parseNucleiOutput(output []byte, scope assessment.Scope, version string) ([
 			Tags        []string `json:"tags,omitempty"`
 		}{endpoint, result.TemplateID, result.Info.Name, result.Info.Severity, result.MatcherName, tags})
 		if artifact.Len() > maxArtifactOutput {
-			return nil, nil, fmt.Errorf("Nuclei sanitized artifact exceeds %d bytes", maxArtifactOutput)
+			return nil, nil, fmt.Errorf("nuclei sanitized artifact exceeds %d bytes", maxArtifactOutput)
 		}
 	}
 	if err := scanner.Err(); err != nil {

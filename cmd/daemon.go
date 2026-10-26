@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
+	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/internal/scheduler"
 	"github.com/spf13/cobra"
@@ -32,6 +33,7 @@ func newDaemonCommand() *cobra.Command {
 				Store:        database,
 				Runner:       recon.NewDefaultStageSet(),
 				AgentTriage:  agent.TriageWorker{Store: database},
+				AgentCycles:  execution.AgentCycleWorker{Store: database},
 				PollInterval: pollInterval,
 				Logger:       logger,
 			}
@@ -41,10 +43,10 @@ func newDaemonCommand() *cobra.Command {
 					return err
 				}
 				if count == 0 {
-					_, err = fmt.Fprintln(cmd.OutOrStdout(), "No due recon jobs or agent triage tasks.")
+					_, err = fmt.Fprintln(cmd.OutOrStdout(), "No due recon jobs, agent triage tasks, or consented adaptive cycles.")
 					return err
 				}
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Processed %d work item(s) (scheduled recon and/or deterministic event triage).\n", count)
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Processed %d work item(s) (scheduled recon, deterministic triage, and/or consented adaptive cycles).\n", count)
 				return err
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)

@@ -2,7 +2,22 @@
 
 Heimdall is a CLI harness for authorized offensive-security work. The current implementation includes saved programs, authorization/expiry checks, scope validation, a SQLite-backed scheduler, a passive OSINT tool catalog, and baseline/diff persistence.
 
+See the [Agentic Security roadmap](docs/ROADMAP_AGENTIC_SECURITY.md) for the current implementation status, security boundaries, remaining phases, and acceptance criteria for Workspace/Code and Engagement/Security modes.
+
 ## Build and test
+
+The required local/CI quality gate is:
+
+```sh
+make check
+```
+
+It checks formatting, module tidiness, package boundaries, Go file-size limits,
+`go vet`, complexity/duplication/error-handling linters, Staticcheck,
+`govulncheck`, race-enabled tests with critical-package coverage floors, and
+buildability. See
+[docs/QUALITY_GATES.md](docs/QUALITY_GATES.md) for architecture conventions,
+the legacy large-file baseline, and the staged refactoring policy.
 
 ```sh
 go test ./...
@@ -150,9 +165,9 @@ heimdall session show <session-id>
 heimdall session list <program-id>
 ```
 
-The CLI sends the most recent 100 stored user/assistant messages to the selected provider and stores each turn locally. Material recon changes also create a separate `agent_event` session and a pending task in the same SQLite transaction. Event triage below is deterministic; the proposal-only planner does not execute tools, and the autonomous tool-execution worker is not implemented.
+The CLI sends the most recent 100 stored user/assistant messages to the selected provider and stores each turn locally. A bounded current-memory briefing can be added only with `heimdall run --session <session-id> --include-memory --prompt '...'`; the session pins one program and the command rejects a stale session scope. The briefing is filtered to that program, excludes stale or source-review-pending records, is advisory/untrusted, and its selected memory IDs and scope hash are recorded as user-message metadata. Material recon changes also create a separate `agent_event` session and a pending task in the same SQLite transaction. Event triage below is deterministic; the proposal-only planner does not execute tools, and the autonomous tool-execution worker is not implemented.
 
-Material change tasks now have a deterministic, read-only triage stage. The daemon processes them automatically; it writes a structured handoff to per-program memory and the event session, but makes no LLM calls and executes no recon. To run one bounded batch manually:
+Material change tasks now have a deterministic, read-only triage stage. The daemon processes them automatically; it writes a structured handoff to per-program memory and the event session, but makes no LLM calls and executes no recon. The handoff may include up to five bounded notes from the same program, only when the event scope still matches the current scope and no source review is pending; stale-scope and stale-source notes are excluded. The memory snapshot is revalidated at commit, so a changed briefing causes a retry instead of persisting stale context. To run one bounded batch manually:
 
 ```sh
 heimdall agent triage --limit 10
@@ -174,7 +189,59 @@ heimdall program policy reset <program-id>
 
 `heimdall agent plan <program-id>` reads a JSON proposal from stdin and checks it against the program policy, active schedule, current authorization, source-review state and scope/port rules. It is a dry-run: no LLM calls, scans or tools are run, and the result reports `execution_available: false`.
 
-An opt-in model can draft those proposals with `heimdall agent propose <program-id> --send-context`. This sends the program's structured scope and policy to the configured provider, but not memory notes, raw HTTP traffic, or artifacts. Memory is a separate opt-in: add `--include-memory` to send up to eight active, unexpired notes from that same program (at most 8 KiB), excluding stale scope/source records and any notes while source review is pending. Without both flags, memory is not read into the model context. Review notes before sending because they may contain sensitive content. The generated JSON still passes through the same policy validator; it cannot invoke tools. Without `--send-context`, the command refuses to send program data. The budget is checked per proposed plan; a persistent action-budget ledger and executor are still future work.
+The execution foundation has a durable per-program action-run ledger (`012_agent_action_ledger.sql` through `023_agent_cycle_job_review.sql`; migrations add request usage, result storage, operator review, planner egress audit, consented cycle queue/daily caps, memory-ID audit, automation-bound action snapshots, a daily request ceiling, policy-revision binding and cycle-job review metadata). These migrations reset older persistent automation consent so it must be re-approved with current limits/policy. The ledger snapshots authorization, scope and policy revision; reservations are idempotent, consume action/request budget atomically, validate registered stage/class, schedule limits and serialized targets against current scope, then require a just-in-time recheck before transitioning to `running`. `ConsumeAgentActionRequest` charges each native outbound attempt before sending it and rechecks the current authorization, scope, policy and (for daemon cycles) automation consent; retries count separately. `recon.MeteredRoundTripper` fails closed without this meter, and `scheduler.AgentActionRequestMeter` adapts it to the persistent ledger. The first compiled agent adapter is `native_http_probe`: one in-scope `HEAD` per target, no redirect following, no request body, and no response-body persistence; it refuses to start unless the reserved request budget covers every target. Expired action or cycle leases become uncertain/review-required and are never automatically replayed. The daemon claims only future material-event jobs created while persistent consent is enabled; external subprocess tools bypass the Go HTTP meter and remain unavailable to the agent.
+
+To execute a manually reviewed plan, configure an explicit per-program `web` policy and pass up to 20 actions as JSON to the native-only command. The whole plan is policy-checked before the first request; execution stops on the first failed action and does not ask a model to invent follow-ups:
+
+```sh
+heimdall agent execute <program-id> \
+  --action-run-id <new-uuid> --confirm-active-requests <<'JSON'
+{"actions":[{"stage":"web","scope_hash":"<current-scope-hash>","targets":["https://app.example.test/health"],"estimated_calls":1,"rationale":"Single bounded HEAD probe"}]}
+JSON
+```
+
+This sends an active `HEAD` request for each authorized target. It requires a fresh unique action-run UUID; reusing a completed run ID does not replay it. The command accepts 1–20 `web` actions in sequence and has no shell/subprocess path. Do not run it against real targets unless the program authorization and configured policy explicitly permit this test.
+
+For a bounded adaptive cycle, `agent cycle` asks the model for one next action at a time, feeds back only prior probe target/status summaries, and executes each accepted action under the same ledger and run budgets:
+
+```sh
+heimdall agent cycle <program-id> \
+  --action-run-id <new-uuid> --model <model> \
+  --send-context --confirm-active-requests --max-steps 3
+```
+
+`--send-context` consents to sending structured scope, policy, and bounded probe results to the model. `--include-memory` is a further opt-in for up to eight fresh notes from this program only. Provider/model, planner-call count, and the IDs of memory notes sent are recorded in the action-run ledger. The manual cycle is capped at 20 steps and by policy budgets; it stops when the model proposes no action, repeats a target, reaches budget, or an action fails. The daemon runs only future event cycles with persistent consent. Both paths can dispatch only the native HEAD probe; no model tool-calling, shell, or subprocess adapters are enabled.
+
+Persistent consent for a future background cycle is separate and deny-by-default. Configure it only after setting the program's action policy:
+
+```sh
+heimdall program automation set <program-id> \
+  --provider openai --model <model> \
+  --context-egress-expires-at <RFC3339-time-within-90-days> \
+  --allow-model-context-egress --allow-active-requests \
+  --max-cycles-per-day 2 --max-requests-per-day 100 \
+  --max-steps-per-cycle 2 \
+  --reviewed-by <operator> --reason 'Approved bounded adaptive HEAD checks'
+heimdall program automation show <program-id>
+heimdall program automation disable <program-id> \
+  --reviewed-by <operator> --reason 'Revoked by program owner'
+```
+
+`program automation set` records provider/model, separate egress/request consent, expiry, cycle/step caps and a daily request cap; `--include-memory` is an additional explicit consent. `show` includes today's cycles and request units reserved. It does not immediately start a cycle or backfill old tasks. **Future material-event tasks** created while the consent is enabled are added to the durable adaptive-cycle queue; the daemon claims them only while the current consent, authorization, policy revision, web schedule, and source-review gates remain valid. Cycle and daily request budgets are atomically reserved at claim; unused reserved requests are not refunded. Failed/expired jobs are not retried automatically. Migrations that add consent limits or policy binding disable prior automation consents, so review and re-enable them explicitly. Inspect queue state with `heimdall agent cycle-jobs <program-id>`; close a `needs_review` queue job with `agent cycle-review <program-id> <task-id> --decision assessed_no_action|assessed_failed|assessed_completed --reviewed-by <operator> --note '<rationale>'`. If its action run has uncertain actions, review those first with `agent action-review`.
+
+Inspect durable outcomes (including an `uncertain` status after a crash) with:
+
+```sh
+heimdall agent action-runs <program-id>
+heimdall agent action-run <program-id> <action-run-id>
+heimdall agent action-review <program-id> <action-run-id> <action-id> \
+  --decision assessed_not_executed --reviewed-by <operator> \
+  --note 'Reviewed executor and target logs; no request was observed.'
+```
+
+Review records are append-once and require an operator plus a rationale. The action retains status `uncertain`, its request budget remains consumed, and review never retries it. When every uncertain action in a run has an assessment, the run closes as `failed`; start a new, explicitly authorized action run if further testing is warranted.
+
+An opt-in model can draft proposals without executing them with `heimdall agent propose <program-id> --send-context`. This sends the program's structured scope and policy to the configured provider, but not memory notes, raw HTTP traffic, or artifacts. Memory is a separate opt-in: add `--include-memory` to send up to eight active, unexpired notes from that same program (at most 8 KiB), excluding stale scope/source records and any notes while source review is pending. Without both flags, memory is not read into the model context. Review notes before sending because they may contain sensitive content. The generated JSON still passes through the same policy validator; this command never executes tools. Without `--send-context`, the command refuses to send program data. The synchronous `agent cycle` executor is separate and requires its own planner-egress and active-request confirmations.
 
 ```sh
 heimdall agent propose <program-id> --send-context --include-memory
@@ -183,6 +250,10 @@ heimdall agent propose <program-id> --send-context --include-memory
 ### Program-scoped memory (first increment)
 
 Memory records are explicitly attached to one program. Search, listing, retrieval, provenance references, and supersession all require the same `program-id`; there is no global memory search. Source references to runs, events, sessions, snapshots, and artifacts are checked against that program. Records preserve scope/source hashes, can be superseded without deleting history, and can expire or be archived.
+
+Successful runs with observations but no material change event now create a local, deterministic run-summary memory in the same SQLite transaction as run completion. Summaries contain bounded observation counts and a small sample of host/HTTP endpoint keys—not response bodies—and are linked to the run and scope hash. The latest quiet-run summary for the same stage/scope supersedes the prior active one; older records remain in history. These summaries are observations only, expire after 30 days, and do not validate vulnerability findings or authorize actions. Material changes continue through the separate event-triage handoff path.
+
+Complete Nuclei runs also capture up to 20 detections as `finding_candidate` memory linked to that run and scope, with 30-day expiry. The records preserve the scanner's sanitized structured observation and explicitly remain unverified; partial runs do not create them, and no automated path promotes a candidate to reproduced or validated.
 
 ```sh
 heimdall memory add <program-id> --kind hypothesis \
@@ -201,4 +272,4 @@ Use `--content-stdin` instead of `--content` for sensitive notes so their body d
 
 ## Current scope
 
-Amass, Uncover, Gau, AlterX, DNSx, HTTPx, TLSx, Nmap, Katana, FFUF, and Nuclei are integrated. OSINT tool selection and the FFUF wordlist/Nuclei template paths are currently configured through environment variables; schedules, ports, limits and deny-by-default agent policy are stored per program. The deterministic event-triage worker is active, but the LLM planner and tool-execution worker remain future work. Active stages require per-program scope, schedule, limits, and valid authorization; change events create handoffs but do not launch scans or an agent yet.
+Amass, Uncover, Gau, AlterX, DNSx, HTTPx, TLSx, Nmap, Katana, FFUF, and Nuclei are integrated for existing recon workflows. OSINT tool selection and the FFUF wordlist/Nuclei template paths are currently configured through environment variables; schedules, ports, limits and deny-by-default agent policy are stored per program. The deterministic event-triage worker is active. The LLM can now run a bounded synchronous adaptive cycle using only the native metered HTTP HEAD probe; autonomous daemon dispatch, multi-adapter execution, and vulnerability validation/reporting remain future work. External subprocess tools are not available to the agent because their actual request counts cannot yet be enforced.

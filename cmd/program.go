@@ -16,7 +16,7 @@ import (
 
 func newProgramCommand() *cobra.Command {
 	command := &cobra.Command{Use: "program", Short: "Manage authorized programs"}
-	command.AddCommand(newProgramAddCommand(), newProgramListCommand(), newProgramShowCommand(), newProgramActivateCommand(), newProgramPauseCommand(), newProgramSourceCommand(), newProgramPolicyCommand())
+	command.AddCommand(newProgramAddCommand(), newProgramListCommand(), newProgramShowCommand(), newProgramActivateCommand(), newProgramPauseCommand(), newProgramSourceCommand(), newProgramPolicyCommand(), newProgramAutomationCommand())
 	return command
 }
 

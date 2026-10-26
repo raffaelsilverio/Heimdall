@@ -1,0 +1,87 @@
+package cmd
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/raffaelsilverio/Heimdall/internal/agent"
+	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
+	"github.com/raffaelsilverio/Heimdall/internal/recon"
+	"github.com/spf13/cobra"
+)
+
+func newAgentExecuteCommand() *cobra.Command {
+	var actionRunID string
+	var confirmActiveRequests bool
+	command := &cobra.Command{
+		Use:   "execute <program-id>",
+		Short: "Execute a bounded policy-authorized native HTTP plan",
+		Long:  "Reads a complete JSON action list from stdin and executes the supplied native HTTP HEAD actions sequentially under one per-run budget. Requires current program authorization, an enabled web schedule, explicit web policy, and --confirm-active-requests. No shell or subprocess tool is available; the executor does not autonomously invent follow-up actions.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirmActiveRequests {
+				return errors.New("this command sends active HTTP HEAD requests; pass --confirm-active-requests to continue")
+			}
+			if _, err := uuid.Parse(actionRunID); err != nil {
+				return errors.New("--action-run-id must be a UUID so retries cannot silently replay a run")
+			}
+			body, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), maxAgentPlanInputBytes+1))
+			if err != nil {
+				return fmt.Errorf("read agent action JSON: %w", err)
+			}
+			if len(body) > maxAgentPlanInputBytes {
+				return fmt.Errorf("agent action JSON exceeds %d bytes", maxAgentPlanInputBytes)
+			}
+			var input agentPlanInput
+			decoder := json.NewDecoder(bytes.NewReader(body))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&input); err != nil {
+				return fmt.Errorf("decode agent action JSON: %w", err)
+			}
+			var trailing any
+			if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+				if err == nil {
+					return errors.New("agent action input must contain exactly one JSON value")
+				}
+				return fmt.Errorf("read trailing agent action data: %w", err)
+			}
+			if len(input.Actions) == 0 || len(input.Actions) > 20 {
+				return errors.New("native executor accepts between 1 and 20 actions")
+			}
+			for _, action := range input.Actions {
+				if action.Stage != recon.StageWeb {
+					return fmt.Errorf("the initial native executor supports only stage %q", recon.StageWeb)
+				}
+			}
+
+			database, err := openStore(cmd)
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+			result, err := (execution.Executor{
+				Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Policy: agent.ScopeActionPolicy{},
+			}).ExecutePlan(cmd.Context(), args[0], actionRunID, input.Actions, time.Now().UTC())
+			if result.ActionRunID != "" {
+				encoded, encodeErr := json.MarshalIndent(result, "", "  ")
+				if encodeErr != nil {
+					return fmt.Errorf("encode agent execution result: %w", encodeErr)
+				}
+				if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(encoded)); writeErr != nil {
+					return writeErr
+				}
+			}
+			return err
+		},
+	}
+	command.Flags().StringVar(&actionRunID, "action-run-id", "", "Caller-generated UUID used as the idempotency key for this action run")
+	command.Flags().BoolVar(&confirmActiveRequests, "confirm-active-requests", false, "Confirm sending bounded active HTTP HEAD requests to the authorized targets")
+	_ = command.MarkFlagRequired("action-run-id")
+	_ = command.MarkFlagRequired("confirm-active-requests")
+	return command
+}
