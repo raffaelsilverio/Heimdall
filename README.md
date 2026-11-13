@@ -2,7 +2,7 @@
 
 Heimdall is a CLI harness for authorized offensive-security work. The current implementation includes saved programs, authorization/expiry checks, scope validation, a SQLite-backed scheduler, a passive OSINT tool catalog, and baseline/diff persistence.
 
-See the [Agentic Security roadmap](docs/ROADMAP_AGENTIC_SECURITY.md) for the current implementation status, security boundaries, remaining phases, and acceptance criteria for Workspace/Code and Engagement/Security modes.
+See the [development roadmap](Development-roadmap.md) and the [current implementation status and gates](roadmap/21-estado-atual-e-gates.md) for the current state, security boundaries and acceptance criteria. The Workspace/Code mode is described in [roadmap/22-workspace-code-mode.md](roadmap/22-workspace-code-mode.md), and deployment/operations in [roadmap/23-operacao-e-deploy.md](roadmap/23-operacao-e-deploy.md).
 
 ## Build and test
 
