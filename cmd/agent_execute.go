@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
 	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
+	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/spf13/cobra"
 )
@@ -65,7 +66,7 @@ func newAgentExecuteCommand() *cobra.Command {
 			}
 			defer database.Close()
 			result, err := (execution.Executor{
-				Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Policy: agent.ScopeActionPolicy{},
+				Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Policy: agent.ScopeActionPolicy{}, Clock: clock.System{},
 			}).ExecutePlan(cmd.Context(), args[0], actionRunID, input.Actions, time.Now().UTC())
 			if result.ActionRunID != "" {
 				encoded, encodeErr := json.MarshalIndent(result, "", "  ")

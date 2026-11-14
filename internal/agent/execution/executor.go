@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
 	"github.com/raffaelsilverio/Heimdall/internal/assessment"
+	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
-	"github.com/raffaelsilverio/Heimdall/internal/scheduler"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 	"github.com/raffaelsilverio/Heimdall/providers"
 )
@@ -22,6 +22,7 @@ type Executor struct {
 	Store    *store.Store
 	Registry recon.AgentActionRegistry
 	Policy   agent.ActionPolicy
+	Clock    clock.Clock
 }
 
 const (
@@ -106,7 +107,7 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 	if !e.hasNativeHTTPProbe() {
 		return Result{}, errors.New("agent executor requires the compiled native HTTP probe adapter")
 	}
-	now = now.UTC()
+	now = normalizeNow(now, e.Clock)
 	_, policyContext, err := e.loadPolicyContext(ctx, programID)
 	if err != nil {
 		return Result{}, err
@@ -173,7 +174,7 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 		}
 		currentContext.ActionsUsed = currentRun.ActionsReserved
 		currentContext.RequestsUsed = currentRun.RequestsReserved
-		grant, err := e.Policy.Authorize(ctx, currentContext, proposal, time.Now().UTC())
+		grant, err := e.Policy.Authorize(ctx, currentContext, proposal, now)
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
@@ -184,7 +185,7 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
 	}
-	if err := e.Store.CloseAgentActionRun(ctx, programID, cycle.ID, "completed", time.Now().UTC()); err != nil {
+	if err := e.Store.CloseAgentActionRun(ctx, programID, cycle.ID, "completed", now); err != nil {
 		return result, fmt.Errorf("close completed action run: %w", err)
 	}
 	return result, nil
@@ -229,11 +230,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 	if !e.hasNativeHTTPProbe() {
 		return Result{}, errors.New("adaptive executor requires the compiled native HTTP probe adapter")
 	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	} else {
-		now = now.UTC()
-	}
+	now = normalizeNow(now, e.Clock)
 	if automationConsent != nil {
 		if automationRequestBudget < 1 || automationRequestBudget > automationConsent.MaxRequestsPerDay {
 			return Result{}, errors.New("automated cycle request budget does not fit the persisted daily consent cap")
@@ -294,7 +291,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 		if currentRun.Status != "active" {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, fmt.Errorf("action run is %s", currentRun.Status))
 		}
-		if currentProgram.Status != assessment.ProgramActive || !currentProgram.ExpiresAt.After(time.Now().UTC()) || currentContext.SourceReviewPending {
+		if currentProgram.Status != assessment.ProgramActive || !currentProgram.ExpiresAt.After(now) || currentContext.SourceReviewPending {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive planner context is paused, expired, or under source review"))
 		}
 		fingerprint, fingerprintErr := assessment.ScopeFingerprint(currentProgram.Scope)
@@ -306,7 +303,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 			break
 		}
 		if automationConsent != nil {
-			if err := e.validateAutomationConsent(ctx, programID, model.Name(), modelName, includeMemory, *automationConsent, time.Now().UTC()); err != nil {
+			if err := e.validateAutomationConsent(ctx, programID, model.Name(), modelName, includeMemory, *automationConsent, now); err != nil {
 				return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 			}
 		}
@@ -332,7 +329,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 		memory := []agent.PlanMemoryItem(nil)
 		var memoryIDs []string
 		if includeMemory {
-			memory, memoryIDs, err = e.loadCurrentMemory(ctx, programID, time.Now().UTC())
+			memory, memoryIDs, err = e.loadCurrentMemory(ctx, programID, now)
 			if err != nil {
 				return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 			}
@@ -342,7 +339,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 				return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 			}
 		}
-		if err := e.Store.RecordAgentActionPlannerCall(ctx, programID, cycle.ID, model.Name(), modelName, memoryIDs, time.Now().UTC()); err != nil {
+		if err := e.Store.RecordAgentActionPlannerCall(ctx, programID, cycle.ID, model.Name(), modelName, memoryIDs, now); err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
 		result.ModelCalls++
@@ -356,12 +353,12 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 		if generationContext.Policy.MaxTargetsPerAction > maxNativeHTTPActionTargets {
 			generationContext.Policy.MaxTargetsPerAction = maxNativeHTTPActionTargets
 		}
-		proposals, err := agent.GenerateActionProposals(ctx, model, modelName, generationContext, memory, time.Now().UTC())
+		proposals, err := agent.GenerateActionProposals(ctx, model, modelName, generationContext, memory, now)
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
 		if automationConsent != nil {
-			if err := e.validateAutomationConsent(ctx, programID, model.Name(), modelName, includeMemory, *automationConsent, time.Now().UTC()); err != nil {
+			if err := e.validateAutomationConsent(ctx, programID, model.Name(), modelName, includeMemory, *automationConsent, now); err != nil {
 				return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 			}
 		}
@@ -378,7 +375,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive planner must return zero or one action per step"))
 		}
 		proposal := proposals[0]
-		grant, err := e.Policy.Authorize(ctx, currentContext, proposal, time.Now().UTC())
+		grant, err := e.Policy.Authorize(ctx, currentContext, proposal, now)
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, fmt.Errorf("adaptive action rejected by policy: %w", err))
 		}
@@ -423,7 +420,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 	if result.StopReason == "" {
 		result.StopReason = "max_steps_reached"
 	}
-	if err := e.Store.CloseAgentActionRun(ctx, programID, cycle.ID, "completed", time.Now().UTC()); err != nil {
+	if err := e.Store.CloseAgentActionRun(ctx, programID, cycle.ID, "completed", now); err != nil {
 		return result, fmt.Errorf("close adaptive action run: %w", err)
 	}
 	return result, nil
@@ -553,7 +550,7 @@ func (e Executor) executeAction(ctx context.Context, program assessment.Program,
 		Stage: grant.Stage, ActionClass: grant.Class, ProposalJSON: grantJSON, ScopeHash: grant.ScopeHash,
 		PolicyRevision: grant.PolicyRevision, RequestBudget: grant.RequestBudget, TargetCount: len(grant.Targets),
 		Limits: grant.Limits, GrantValidUntil: grant.ValidUntil,
-	}, time.Now().UTC())
+	}, e.now())
 	if err != nil {
 		return fmt.Errorf("reserve authorized action %d: %w", sequence, err)
 	}
@@ -561,12 +558,12 @@ func (e Executor) executeAction(ctx context.Context, program assessment.Program,
 	if actionLease > 10*time.Minute {
 		actionLease = 10 * time.Minute
 	}
-	_, err = e.Store.StartAgentAction(ctx, cycle.ProgramID, cycle.ID, actionID, actionLease, time.Now().UTC())
+	_, err = e.Store.StartAgentAction(ctx, cycle.ProgramID, cycle.ID, actionID, actionLease, e.now())
 	if err != nil {
-		_ = e.Store.CancelReservedAgentAction(ctx, cycle.ProgramID, cycle.ID, actionID, time.Now().UTC())
+		_ = e.Store.CancelReservedAgentAction(ctx, cycle.ProgramID, cycle.ID, actionID, e.now())
 		return fmt.Errorf("revalidate action %d before execution: %w", sequence, err)
 	}
-	meter := scheduler.AgentActionRequestMeter{Ledger: e.Store, ProgramID: cycle.ProgramID, RunID: cycle.ID, ActionID: actionID}
+	meter := AgentActionRequestMeter{Ledger: e.Store, ProgramID: cycle.ProgramID, RunID: cycle.ID, ActionID: actionID, Now: e.now}
 	var requestMeter recon.RequestMeter = meter
 	if guard != nil {
 		requestMeter = guardedRequestMeter{Base: meter, Guard: guard}
@@ -603,14 +600,14 @@ func (e Executor) executeAction(ctx context.Context, program assessment.Program,
 	}
 	resultJSON, err := json.Marshal(storedActionResult{
 		ProgramID: cycle.ProgramID, ActionRunID: cycle.ID, ActionID: actionID, ScopeHash: grant.ScopeHash,
-		PolicyRevision: grant.PolicyRevision, Stage: grant.Stage, CompletedAt: time.Now().UTC(),
+		PolicyRevision: grant.PolicyRevision, Stage: grant.Stage, CompletedAt: e.now(),
 		Observations: collection.Observations, Tools: collection.Tools, Error: item.Error,
 		Notice: "Native one-request-per-target action result. No response body was collected; this record does not validate a vulnerability.",
 	})
 	if err != nil {
 		return fmt.Errorf("encode action %d result: %w", sequence, err)
 	}
-	if err := e.Store.FinishAgentActionWithResult(persistCtx, cycle.ProgramID, cycle.ID, actionID, outcome, resultJSON, time.Now().UTC()); err != nil {
+	if err := e.Store.FinishAgentActionWithResult(persistCtx, cycle.ProgramID, cycle.ID, actionID, outcome, resultJSON, e.now()); err != nil {
 		return fmt.Errorf("persist action %d result: %w", sequence, err)
 	}
 	if runErr != nil {
@@ -634,11 +631,12 @@ func (meter guardedRequestMeter) ConsumeRequest(ctx context.Context) error {
 }
 
 func (e Executor) closeFailedPlan(ctx context.Context, result Result, programID, runID string, cause error) (Result, error) {
+	now := e.now()
 	result.Status = "failed"
 	result.Error = cause.Error()
 	persistCtx, cancel := persistenceContext(ctx)
 	defer cancel()
-	if err := e.Store.CloseAgentActionRun(persistCtx, programID, runID, "failed", time.Now().UTC()); err != nil {
+	if err := e.Store.CloseAgentActionRun(persistCtx, programID, runID, "failed", now); err != nil {
 		return result, errors.Join(cause, fmt.Errorf("close failed action run: %w", err))
 	}
 	return result, cause

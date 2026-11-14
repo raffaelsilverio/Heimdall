@@ -254,5 +254,12 @@ func createAgentEventSession(ctx context.Context, tx *sql.Tx, event ChangeEvent,
 		VALUES (?, 'pending', ?, ?)`, taskID, now.UTC().Unix(), now.UTC().Unix()); err != nil {
 		return fmt.Errorf("enqueue deterministic agent event triage: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_cycle_jobs(task_id, program_id, event_id, event_scope_hash,
+		automation_revision, status, created_at, updated_at)
+		SELECT ?, ?, ?, ?, revision, 'pending', ?, ?
+		FROM program_agent_automation WHERE program_id = ? AND enabled = 1`,
+		taskID, event.ProgramID, event.ID, scopeHash, now.UTC().Unix(), now.UTC().Unix(), event.ProgramID); err != nil {
+		return fmt.Errorf("enqueue consented agent cycle: %w", err)
+	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
+	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 	"github.com/raffaelsilverio/Heimdall/providers"
@@ -21,6 +22,7 @@ type AgentCycleWorker struct {
 	LeaseDuration time.Duration
 	Logger        *slog.Logger
 	NewProvider   func(string, string) (providers.Provider, error)
+	Clock         clock.Clock
 }
 
 type persistedCycleJobResult struct {
@@ -105,7 +107,7 @@ func (w AgentCycleWorker) processLease(ctx context.Context, lease store.AgentCyc
 			case <-stopRenewal:
 				return
 			case <-ticker.C:
-				renewed, err := w.Store.RenewAgentCycleJobLease(cycleContext, lease, time.Now().UTC(), leaseDuration)
+				renewed, err := w.Store.RenewAgentCycleJobLease(cycleContext, lease, w.now(), leaseDuration)
 				if err != nil || !renewed {
 					if err != nil {
 						renewalErr = err
@@ -120,7 +122,7 @@ func (w AgentCycleWorker) processLease(ctx context.Context, lease store.AgentCyc
 	}()
 
 	guard := func(guardContext context.Context) error {
-		renewed, err := w.Store.RenewAgentCycleJobLease(guardContext, lease, time.Now().UTC(), leaseDuration)
+		renewed, err := w.Store.RenewAgentCycleJobLease(guardContext, lease, w.now(), leaseDuration)
 		if err != nil {
 			return err
 		}
@@ -133,9 +135,9 @@ func (w AgentCycleWorker) processLease(ctx context.Context, lease store.AgentCyc
 		Stage: lease.Stage, Target: lease.Target,
 		Outcome: boundedWorkerEventSummary(lease.ChangeType, lease.Category),
 	}
-	result, runErr := (Executor{Store: w.Store}).RunAdaptiveWithAutomationGuard(
+	result, runErr := (Executor{Store: w.Store, Clock: w.Clock}).RunAdaptiveWithAutomationGuard(
 		cycleContext, lease.ProgramID, lease.ActionRunID, model, modelConfig.Model,
-		lease.Automation.MaxStepsPerCycle, lease.RequestBudget, []agent.PlanActionObservation{seed}, lease.Automation, guard, time.Now().UTC(),
+		lease.Automation.MaxStepsPerCycle, lease.RequestBudget, []agent.PlanActionObservation{seed}, lease.Automation, guard, w.now(),
 	)
 	close(stopRenewal)
 	cancelCycle()
@@ -188,7 +190,7 @@ func (w AgentCycleWorker) finishJob(ctx context.Context, lease store.AgentCycleL
 	}
 	persistContext, cancel := persistenceContext(ctx)
 	defer cancel()
-	return w.Store.CompleteAgentCycleJob(persistContext, lease, outcome, encoded, cause, time.Now().UTC())
+	return w.Store.CompleteAgentCycleJob(persistContext, lease, outcome, encoded, cause, w.now())
 }
 
 func boundedWorkerEventSummary(changeType, category string) string {

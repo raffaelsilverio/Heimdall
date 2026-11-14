@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 )
@@ -35,6 +36,11 @@ type Daemon struct {
 	PollInterval  time.Duration
 	LeaseDuration time.Duration
 	Logger        *slog.Logger
+	Clock         clock.Clock
+}
+
+func (d Daemon) now() time.Time {
+	return clock.Or(d.Clock).Now()
 }
 
 func (d Daemon) Run(ctx context.Context) error {
@@ -48,7 +54,7 @@ func (d Daemon) Run(ctx context.Context) error {
 	logger := d.logger()
 	logger.Info("Heimdall daemon started", "poll_interval", interval)
 	for {
-		processed, err := d.RunCycle(ctx, time.Now().UTC())
+		processed, err := d.RunCycle(ctx, d.now())
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("scheduler cycle failed", "error", err)
 		}
@@ -97,7 +103,7 @@ func (d Daemon) RunCycle(ctx context.Context, now time.Time) (int, error) {
 		logger.Info("running scheduled recon", "program", job.Program.Name, "stage", job.Stage, "run_id", job.RunID)
 		collection := recon.Collection{}
 		runContext, cancelRun := context.WithDeadline(ctx, job.Program.ExpiresAt)
-		runErr := d.Store.ValidateRunAuthorization(runContext, job.RunID, time.Now().UTC())
+		runErr := d.Store.ValidateRunAuthorization(runContext, job.RunID, d.now())
 		if runErr == nil {
 			targets := []string(nil)
 			switch job.Stage {
@@ -122,7 +128,7 @@ func (d Daemon) RunCycle(ctx context.Context, now time.Time) (int, error) {
 		if ctx.Err() != nil {
 			persistContext, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		}
-		events, persistErr := d.Store.CompleteRun(persistContext, job.RunID, collection, runErr == nil, runErr, time.Now().UTC())
+		events, persistErr := d.Store.CompleteRun(persistContext, job.RunID, collection, runErr == nil, runErr, d.now())
 		cancel()
 		if persistErr != nil {
 			failures = append(failures, fmt.Errorf("persist run %s: %w", job.RunID, persistErr))
@@ -145,7 +151,7 @@ func (d Daemon) RunCycle(ctx context.Context, now time.Time) (int, error) {
 func (d Daemon) runStageWithPolicy(ctx context.Context, job store.DueJob, request recon.StageRequest) (recon.Collection, error) {
 	stageContext, cancelStage := context.WithCancel(ctx)
 	defer cancelStage()
-	if err := d.Store.ValidateRunAuthorization(stageContext, job.RunID, time.Now().UTC()); err != nil {
+	if err := d.Store.ValidateRunAuthorization(stageContext, job.RunID, d.now()); err != nil {
 		return recon.Collection{}, err
 	}
 	stopMonitor := make(chan struct{})
@@ -161,7 +167,7 @@ func (d Daemon) runStageWithPolicy(ctx context.Context, job store.DueJob, reques
 			case <-stopMonitor:
 				return
 			case <-ticker.C:
-				if err := d.Store.ValidateRunAuthorization(stageContext, job.RunID, time.Now().UTC()); err != nil {
+				if err := d.Store.ValidateRunAuthorization(stageContext, job.RunID, d.now()); err != nil {
 					cancelStage()
 					return
 				}
@@ -176,7 +182,7 @@ func (d Daemon) runStageWithPolicy(ctx context.Context, job store.DueJob, reques
 	}
 	checkContext, cancelCheck := context.WithTimeout(context.WithoutCancel(stageContext), 5*time.Second)
 	defer cancelCheck()
-	if policyErr := d.Store.ValidateRunAuthorization(checkContext, job.RunID, time.Now().UTC()); policyErr != nil && err == nil {
+	if policyErr := d.Store.ValidateRunAuthorization(checkContext, job.RunID, d.now()); policyErr != nil && err == nil {
 		err = policyErr
 	}
 	return collection, err

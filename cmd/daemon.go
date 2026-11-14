@@ -10,6 +10,7 @@ import (
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
 	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
+	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/internal/scheduler"
 	"github.com/spf13/cobra"
@@ -33,9 +34,10 @@ func newDaemonCommand() *cobra.Command {
 				Store:        database,
 				Runner:       recon.NewDefaultStageSet(),
 				AgentTriage:  agent.TriageWorker{Store: database},
-				AgentCycles:  execution.AgentCycleWorker{Store: database},
+				AgentCycles:  execution.AgentCycleWorker{Store: database, Clock: clock.System{}},
 				PollInterval: pollInterval,
 				Logger:       logger,
+				Clock:        clock.System{},
 			}
 			if runOnce {
 				count, err := daemon.RunCycle(cmd.Context(), time.Now().UTC())

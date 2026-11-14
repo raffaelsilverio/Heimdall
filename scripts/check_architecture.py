@@ -10,6 +10,38 @@ import sys
 MODULE = "github.com/raffaelsilverio/Heimdall"
 
 
+FORBIDDEN = {
+    f"{MODULE}/internal/store": {
+        f"{MODULE}/internal/agent",
+        f"{MODULE}/internal/agent/execution",
+        f"{MODULE}/internal/scheduler",
+        f"{MODULE}/internal/config",
+        f"{MODULE}/internal/platform",
+        f"{MODULE}/providers",
+    },
+    f"{MODULE}/internal/scheduler": {
+        f"{MODULE}/internal/agent",
+        f"{MODULE}/internal/agent/execution",
+        f"{MODULE}/internal/config",
+        f"{MODULE}/internal/platform",
+        f"{MODULE}/providers",
+    },
+    f"{MODULE}/internal/agent": {
+        f"{MODULE}/internal/store",
+        f"{MODULE}/internal/scheduler",
+        f"{MODULE}/internal/agent/execution",
+        f"{MODULE}/internal/config",
+        f"{MODULE}/internal/platform",
+        f"{MODULE}/cmd",
+    },
+    f"{MODULE}/internal/agent/execution": {
+        f"{MODULE}/internal/scheduler",
+        f"{MODULE}/internal/platform",
+        f"{MODULE}/cmd",
+    },
+}
+
+
 def main() -> int:
     command = ["go", "list", "-f", '{{.ImportPath}} {{join .Imports " "}}', "./..."]
     result = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -37,6 +69,10 @@ def main() -> int:
             forbidden = [item for item in internal_imports if item not in allowed]
             if forbidden:
                 violations.append(f"{importer} may depend on assessment, not higher-level packages: {forbidden}")
+
+        for dependency in FORBIDDEN.get(importer, set()):
+            if dependency in imported:
+                violations.append(f"{importer} must not import {dependency}")
 
     if violations:
         print("Go architecture boundary check failed:", file=sys.stderr)

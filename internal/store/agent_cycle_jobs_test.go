@@ -13,9 +13,9 @@ import (
 func TestAgentCycleQueueRequiresConsentAndEnforcesDailyCapWithoutReplay(t *testing.T) {
 	database := openTestStore(t)
 	ctx := context.Background()
-	// The enqueue trigger checks consent against the wall clock, so anchor the
-	// fixture to today's UTC midnight instead of a date that will expire.
-	start := time.Now().UTC().Truncate(24 * time.Hour)
+	// Agent cycles are enqueued in Go with the caller's clock, so this fixture
+	// can use a fixed date without depending on the wall clock.
+	start := time.Date(2026, time.October, 27, 0, 0, 0, 0, time.UTC)
 	program, err := createQueueTestProgram(t, database, "Queued adaptive program", start, true)
 	if err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
+	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/providers"
@@ -53,7 +54,7 @@ func newAgentCycleCommand() *cobra.Command {
 			}
 			defer closeStoreOnReturn(database, &resultErr)
 			result, err := (execution.Executor{
-				Store: database, Registry: recon.NewDefaultAgentActionRegistry(),
+				Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Clock: clock.System{},
 			}).RunAdaptive(cmd.Context(), args[0], actionRunID, model, cfg.Model, includeMemory, maxSteps, time.Now().UTC())
 			if result.ActionRunID != "" {
 				encoded, encodeErr := json.MarshalIndent(result, "", "  ")
