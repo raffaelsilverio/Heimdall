@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "rationale": "Propagate store close failures from the synchronous adaptive cycle command",
+  "rationale": "Split agent_action_ledger, executor, store memory/run lifecycle, and store tests into focused files without changing behavior; existing findings moved with their functions and no new debt was introduced.",
   "known_issue_totals": {
     "errcheck": 35,
     "gocognit": 49,
@@ -27,7 +27,7 @@
       "internal/agent/execution/executor_test.go": 4,
       "internal/scheduler/daemon_test.go": 3,
       "internal/store/agent_triage_migration_test.go": 1,
-      "internal/store/store_test.go": 1
+      "internal/store/store_program_test.go": 1
     },
     "gocognit": {
       "cmd/agent_cycle.go": 1,
@@ -39,7 +39,8 @@
       "cmd/tools.go": 1,
       "internal/agent/contract/policy.go": 2,
       "internal/agent/execution/cycle_worker.go": 1,
-      "internal/agent/execution/executor.go": 2,
+      "internal/agent/execution/executor.go": 1,
+      "internal/agent/execution/executor_adaptive.go": 1,
       "internal/agent/planner.go": 1,
       "internal/agent/policy.go": 1,
       "internal/assessment/program.go": 1,
@@ -51,7 +52,10 @@
       "internal/recon/nuclei.go": 2,
       "internal/recon/web.go": 2,
       "internal/scheduler/daemon.go": 1,
-      "internal/store/agent_action_ledger.go": 6,
+      "internal/store/agent_action_ledger.go": 1,
+      "internal/store/agent_action_ledger_execution.go": 3,
+      "internal/store/agent_action_ledger_validation.go": 1,
+      "internal/store/agent_action_planner_audit.go": 1,
       "internal/store/agent_automation.go": 1,
       "internal/store/agent_cycle_jobs.go": 1,
       "internal/store/agent_cycle_jobs_review.go": 1,
@@ -60,13 +64,15 @@
       "internal/store/memory.go": 1,
       "internal/store/program_sources.go": 2,
       "internal/store/programs.go": 1,
-      "internal/store/runs.go": 3,
+      "internal/store/runs.go": 2,
+      "internal/store/runs_changes.go": 1,
       "internal/store/schedules.go": 1,
       "internal/store/store.go": 1
     },
     "gocyclo": {
       "internal/recon/katana.go": 1,
-      "internal/store/agent_action_ledger.go": 3,
+      "internal/store/agent_action_ledger_recovery.go": 1,
+      "internal/store/agent_action_ledger_validation.go": 2,
       "internal/store/agent_cycle_jobs.go": 2,
       "internal/store/agent_triage.go": 2
     },
@@ -110,8 +116,10 @@
         "(AgentCycleWorker).processLease": 29
       },
       "internal/agent/execution/executor.go": {
-        "(Executor).ExecutePlan": 56,
-        "(Executor).runAdaptive": 129
+        "(Executor).ExecutePlan": 56
+      },
+      "internal/agent/execution/executor_adaptive.go": {
+        "(Executor).runAdaptive": 127
       },
       "internal/agent/planner.go": {
         "GenerateActionProposals": 35
@@ -152,12 +160,18 @@
         "(Daemon).RunCycle": 27
       },
       "internal/store/agent_action_ledger.go": {
+        "(*Store).createAgentActionRun": 28
+      },
+      "internal/store/agent_action_ledger_execution.go": {
         "(*Store).ConsumeAgentActionRequest": 30,
-        "(*Store).RecordAgentActionPlannerCall": 31,
         "(*Store).ReserveAgentAction": 31,
-        "(*Store).StartAgentAction": 26,
-        "(*Store).createAgentActionRun": 28,
+        "(*Store).StartAgentAction": 26
+      },
+      "internal/store/agent_action_ledger_validation.go": {
         "validateLiveAgentActionRun": 22
+      },
+      "internal/store/agent_action_planner_audit.go": {
+        "(*Store).RecordAgentActionPlannerCall": 31
       },
       "internal/store/agent_automation.go": {
         "(*Store).SetProgramAgentAutomation": 33
@@ -186,7 +200,9 @@
       },
       "internal/store/runs.go": {
         "(*Store).CompleteRun": 55,
-        "(*Store).persistArtifacts": 23,
+        "(*Store).persistArtifacts": 23
+      },
+      "internal/store/runs_changes.go": {
         "compareWithBaseline": 31
       },
       "internal/store/schedules.go": {
@@ -200,8 +216,10 @@
       "internal/recon/katana.go": {
         "(KatanaCollector).Collect": 20
       },
-      "internal/store/agent_action_ledger.go": {
-        "(*Store).ResolveUncertainAgentAction": 23,
+      "internal/store/agent_action_ledger_recovery.go": {
+        "(*Store).ResolveUncertainAgentAction": 23
+      },
+      "internal/store/agent_action_ledger_validation.go": {
         "validateAutomationForAgentActionRun": 20,
         "validateSerializedAgentActionGrant": 22
       },

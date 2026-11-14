@@ -1,10 +1,4 @@
 {
   "max_lines": 500,
-  "legacy_oversized": {
-    "internal/agent/execution/executor.go": 674,
-    "internal/store/agent_action_ledger.go": 1138,
-    "internal/store/memory.go": 536,
-    "internal/store/runs.go": 516,
-    "internal/store/store_test.go": 564
-  }
+  "legacy_oversized": {}
 }
