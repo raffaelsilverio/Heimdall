@@ -53,7 +53,8 @@
       "internal/scheduler/daemon.go": 1,
       "internal/store/agent_action_ledger.go": 6,
       "internal/store/agent_automation.go": 1,
-      "internal/store/agent_cycle_jobs.go": 2,
+      "internal/store/agent_cycle_jobs.go": 1,
+      "internal/store/agent_cycle_jobs_review.go": 1,
       "internal/store/agent_triage.go": 1,
       "internal/store/finding_capture.go": 1,
       "internal/store/memory.go": 1,
@@ -162,7 +163,9 @@
         "(*Store).SetProgramAgentAutomation": 33
       },
       "internal/store/agent_cycle_jobs.go": {
-        "(*Store).ClaimAgentCycleJobs": 50,
+        "(*Store).ClaimAgentCycleJobs": 50
+      },
+      "internal/store/agent_cycle_jobs_review.go": {
         "(*Store).ResolveAgentCycleJobReview": 74
       },
       "internal/store/agent_triage.go": {

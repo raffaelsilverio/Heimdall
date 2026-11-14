@@ -13,7 +13,9 @@ import (
 func TestAgentCycleQueueRequiresConsentAndEnforcesDailyCapWithoutReplay(t *testing.T) {
 	database := openTestStore(t)
 	ctx := context.Background()
-	start := time.Date(2026, time.October, 26, 0, 0, 0, 0, time.UTC)
+	// The enqueue trigger checks consent against the wall clock, so anchor the
+	// fixture to today's UTC midnight instead of a date that will expire.
+	start := time.Now().UTC().Truncate(24 * time.Hour)
 	program, err := createQueueTestProgram(t, database, "Queued adaptive program", start, true)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +60,7 @@ func TestAgentCycleQueueRequiresConsentAndEnforcesDailyCapWithoutReplay(t *testi
 	}
 	var dailyUsage int
 	var dailyRequests int
-	if err := database.db.QueryRowContext(ctx, `SELECT cycles_started, requests_reserved FROM agent_cycle_daily_usage WHERE program_id = ? AND utc_day = '2026-10-26'`, program.ID).Scan(&dailyUsage, &dailyRequests); err != nil || dailyUsage != 1 || dailyRequests != 1 {
+	if err := database.db.QueryRowContext(ctx, `SELECT cycles_started, requests_reserved FROM agent_cycle_daily_usage WHERE program_id = ? AND utc_day = ?`, program.ID, start.Format("2006-01-02")).Scan(&dailyUsage, &dailyRequests); err != nil || dailyUsage != 1 || dailyRequests != 1 {
 		t.Fatalf("daily cycle/request usage was not atomically charged: cycles=%d requests=%d err=%v", dailyUsage, dailyRequests, err)
 	}
 	// An expired running lease is moved to review, never reclaimed or replayed.
