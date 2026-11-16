@@ -90,7 +90,9 @@ func (w AgentCycleWorker) processLease(ctx context.Context, lease store.AgentCyc
 	}
 	newProvider := w.NewProvider
 	if newProvider == nil {
-		newProvider = providers.New
+		newProvider = func(name, apiKey string) (providers.Provider, error) {
+			return providers.NewWithTimeout(name, apiKey, modelConfig.RequestTimeout)
+		}
 	}
 	model, err := newProvider(modelConfig.Provider, modelConfig.APIKey)
 	if err != nil {

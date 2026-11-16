@@ -30,6 +30,16 @@ func TestRootRejectsMissingConfigFile(t *testing.T) {
 	}
 }
 
+func TestRootRejectsInvalidRequestTimeout(t *testing.T) {
+	root := NewRootCommand()
+	root.SetArgs([]string{"--request-timeout", "500ms", "tools", "list"})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "must be between") {
+		t.Fatalf("Execute error = %v, want request timeout range error", err)
+	}
+}
+
 func TestRootReadsConfigFileFromHome(t *testing.T) {
 	t.Setenv("HEIMDALL_PROVIDER", "")
 	home := t.TempDir()

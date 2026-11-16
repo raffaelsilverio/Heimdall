@@ -20,6 +20,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 
 - Configuração resolvida por precedência flag > ambiente > `<home>/config.yaml` > defaults, com validação fail-closed de provider e logging; API keys continuam apenas no ambiente.
 - Logger `slog` global configurável por `--log-level`/`--log-format` (`text` ou `json`), partilhado por CLI, daemon e scheduler.
+- Providers OpenAI e OpenCode Zen com timeout por pedido configurável (`1s`–`10m`), rótulos de erro por provider e erros sentinela para auth, rate limit, 5xx, timeout e resposta inválida.
 - Programas com autorização/expiração, scope tipado, portas, precedência de exclusão, schedules e limites.
 - Sincronização HackerOne read-only com snapshots, revisão pendente e pausa; a aprovação nunca reativa automaticamente o programa.
 - SQLite/FTS com memória estritamente por `program_id`, proveniência e hashes, validade, supersessão, pesquisa/lista/show/archive/restore.
@@ -38,6 +39,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 
 - O daemon só executa ciclos quando existe consentimento persistente válido; programas e consentimentos novos ficam desabilitados por omissão. Não há backfill de eventos anteriores ao consentimento.
 - A única ação agentic é o probe HTTP nativo. Os adaptadores existentes via subprocesso continuam disponíveis nos fluxos normais de recon, mas **não** no executor agentic, porque o tráfego interno não passa pelo meter Go.
+- Os providers não fazem retry automático; 429, 5xx e timeouts são devolvidos ao chamador como erros tipados para decisão explícita.
 - Não há modo de edição de repositório, sandbox de código, workflow de findings reproduzidos/validados nem submissão de reports.
 - `finding_candidate` é uma deteção de scanner, não prova de vulnerabilidade. A memória nunca autoriza ações.
 

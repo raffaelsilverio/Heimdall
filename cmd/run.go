@@ -36,7 +36,7 @@ func newRunCommand() *cobra.Command {
 			if strings.TrimSpace(cfg.Model) == "" {
 				return fmt.Errorf("model is required; use --model, HEIMDALL_MODEL or the configured model")
 			}
-			provider, err := providers.New(cfg.Provider, cfg.APIKey)
+			provider, err := providers.NewWithTimeout(cfg.Provider, cfg.APIKey, cfg.RequestTimeout)
 			if err != nil {
 				return err
 			}

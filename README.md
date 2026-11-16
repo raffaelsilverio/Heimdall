@@ -48,9 +48,10 @@ provider: opencode
 model: <model-id>
 log_level: info
 log_format: json
+request_timeout: 60s
 ```
 
-`provider` must be `openai` or `opencode`, `log_level` one of `debug`, `info`, `warn` or `error`, and `log_format` one of `text` or `json`. The equivalent flags are `--log-level` and `--log-format`; environment overrides are `HEIMDALL_PROVIDER`, `HEIMDALL_MODEL`, `HEIMDALL_LOG_LEVEL` and `HEIMDALL_LOG_FORMAT`. API keys are never read from the config file: `openai` uses `OPENAI_API_KEY` and `opencode` uses `OPENCODE_API_KEY`. The daemon and scheduler emit structured `slog` records using the same level and format.
+`provider` must be `openai` or `opencode`, `log_level` one of `debug`, `info`, `warn` or `error`, `log_format` one of `text` or `json`, and `request_timeout` a Go duration between `1s` and `10m`. The equivalent flags are `--log-level`, `--log-format` and `--request-timeout`; environment overrides are `HEIMDALL_PROVIDER`, `HEIMDALL_MODEL`, `HEIMDALL_LOG_LEVEL`, `HEIMDALL_LOG_FORMAT` and `HEIMDALL_REQUEST_TIMEOUT`. API keys are never read from the config file: `openai` uses `OPENAI_API_KEY` and `opencode` uses `OPENCODE_API_KEY`. The daemon and scheduler emit structured `slog` records using the same level and format.
 
 ## Programs and schedules
 

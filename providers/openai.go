@@ -7,12 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
-const openAIResponsesURL = "https://api.openai.com/v1/responses"
+const (
+	openAIResponsesURL = "https://api.openai.com/v1/responses"
+
+	providerOpenAI   = "openai"
+	providerOpenCode = "opencode"
+
+	// DefaultTimeout bounds a single provider request when no override is set.
+	DefaultTimeout = 60 * time.Second
+)
 
 type OpenAI struct {
 	apiKey     string
@@ -22,15 +31,38 @@ type OpenAI struct {
 }
 
 func NewOpenAI(apiKey string) *OpenAI {
+	return NewOpenAIWithTimeout(apiKey, DefaultTimeout)
+}
+
+func NewOpenAIWithTimeout(apiKey string, timeout time.Duration) *OpenAI {
+	return newOpenAI(apiKey, openAIResponsesURL, providerOpenAI, timeout)
+}
+
+func newOpenAI(apiKey, endpoint, name string, timeout time.Duration) *OpenAI {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
 	return &OpenAI{
 		apiKey:     strings.TrimSpace(apiKey),
-		httpClient: &http.Client{Timeout: 60 * time.Second},
-		endpoint:   openAIResponsesURL,
-		name:       "openai",
+		httpClient: &http.Client{Timeout: timeout},
+		endpoint:   endpoint,
+		name:       name,
 	}
 }
-func (p *OpenAI) Name() string {
-	return p.name
+
+func (provider *OpenAI) Name() string {
+	return provider.name
+}
+
+func (provider *OpenAI) label() string {
+	switch provider.name {
+	case providerOpenCode:
+		return "OpenCode Zen"
+	case "", providerOpenAI:
+		return "OpenAI"
+	default:
+		return provider.name
+	}
 }
 
 type openAIRequest struct {
@@ -53,20 +85,20 @@ type openAIError struct {
 	} `json:"error"`
 }
 
-func (p *OpenAI) Generate(
+func (provider *OpenAI) Generate(
 	ctx context.Context,
 	request Request,
 ) (response Response, err error) {
-	if p.apiKey == "" {
-		return Response{}, fmt.Errorf("OpenAI API key is not configured")
+	if provider.apiKey == "" {
+		return Response{}, fmt.Errorf("%s: %w", provider.label(), ErrMissingAPIKey)
 	}
 
 	if strings.TrimSpace(request.Model) == "" {
-		return Response{}, fmt.Errorf("model is required")
+		return Response{}, fmt.Errorf("%s: %w", provider.label(), ErrMissingModel)
 	}
 
 	if len(request.Messages) == 0 {
-		return Response{}, fmt.Errorf("at least one message is required")
+		return Response{}, fmt.Errorf("%s: %w", provider.label(), ErrMissingMessages)
 	}
 
 	payload := openAIRequest{
@@ -76,25 +108,25 @@ func (p *OpenAI) Generate(
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return Response{}, fmt.Errorf("encode request: %w", err)
+		return Response{}, fmt.Errorf("%s: encode request: %w", provider.label(), err)
 	}
 
 	httpRequest, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		p.endpoint,
+		provider.endpoint,
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return Response{}, fmt.Errorf("create request: %w", err)
+		return Response{}, fmt.Errorf("%s: create request: %w", provider.label(), err)
 	}
 
-	httpRequest.Header.Set("Authorization", "Bearer "+p.apiKey)
+	httpRequest.Header.Set("Authorization", "Bearer "+provider.apiKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 
-	httpResponse, err := p.httpClient.Do(httpRequest)
+	httpResponse, err := provider.httpClient.Do(httpRequest)
 	if err != nil {
-		return Response{}, fmt.Errorf("send OpenAI request: %w", err)
+		return Response{}, provider.transportError(err)
 	}
 	defer closeProviderResponseBody(httpResponse.Body, &err)
 
@@ -102,34 +134,40 @@ func (p *OpenAI) Generate(
 		io.LimitReader(httpResponse.Body, 4<<20),
 	)
 	if err != nil {
-		return Response{}, fmt.Errorf("read response: %w", err)
+		return Response{}, fmt.Errorf("%s: read response: %w", provider.label(), err)
 	}
 
-	return decodeOpenAIResponse(httpResponse.StatusCode, responseBody)
+	return provider.decodeResponse(httpResponse.StatusCode, responseBody)
 }
 
-func decodeOpenAIResponse(statusCode int, responseBody []byte) (Response, error) {
+func (provider *OpenAI) transportError(err error) error {
+	var timeoutError net.Error
+	if errors.As(err, &timeoutError) && timeoutError.Timeout() {
+		return fmt.Errorf("%s: %w: %w", provider.label(), ErrTimeout, err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w: %w", provider.label(), ErrTimeout, err)
+	}
+	return fmt.Errorf("%s: send request: %w", provider.label(), err)
+}
+
+func (provider *OpenAI) decodeResponse(statusCode int, responseBody []byte) (Response, error) {
 	if statusCode < 200 || statusCode >= 300 {
-		var apiError openAIError
-
-		if json.Unmarshal(responseBody, &apiError) == nil &&
-			apiError.Error.Message != "" {
-			return Response{}, fmt.Errorf(
-				"OpenAI API returned HTTP %d: %s",
-				statusCode,
-				apiError.Error.Message,
-			)
+		apiError := &APIError{
+			Provider:   provider.label(),
+			StatusCode: statusCode,
+			Err:        classifyStatus(statusCode),
 		}
-
-		return Response{}, fmt.Errorf(
-			"OpenAI API returned HTTP %d",
-			statusCode,
-		)
+		var errorPayload openAIError
+		if json.Unmarshal(responseBody, &errorPayload) == nil {
+			apiError.Message = errorPayload.Error.Message
+		}
+		return Response{}, apiError
 	}
 
 	var result openAIResponse
 	if err := json.Unmarshal(responseBody, &result); err != nil {
-		return Response{}, fmt.Errorf("decode response: %w", err)
+		return Response{}, fmt.Errorf("%s: %w: %w", provider.label(), ErrInvalidResponse, err)
 	}
 
 	var text strings.Builder
@@ -143,7 +181,7 @@ func decodeOpenAIResponse(statusCode int, responseBody []byte) (Response, error)
 	}
 
 	if strings.TrimSpace(text.String()) == "" {
-		return Response{}, fmt.Errorf("OpenAI returned no text output")
+		return Response{}, fmt.Errorf("%s: %w: no text output", provider.label(), ErrInvalidResponse)
 	}
 
 	return Response{Content: text.String()}, nil
@@ -151,6 +189,6 @@ func decodeOpenAIResponse(statusCode int, responseBody []byte) (Response, error)
 
 func closeProviderResponseBody(body io.Closer, resultErr *error) {
 	if closeErr := body.Close(); closeErr != nil {
-		*resultErr = errors.Join(*resultErr, fmt.Errorf("close OpenAI response body: %w", closeErr))
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close provider response body: %w", closeErr))
 	}
 }

@@ -33,6 +33,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().String("config", "", "Config file (default: <home>/"+config.ConfigFileName+")")
 	root.PersistentFlags().String("log-level", "", "Log level: debug, info, warn or error (default: info)")
 	root.PersistentFlags().String("log-format", "", "Log format: text or json (default: text)")
+	root.PersistentFlags().Duration("request-timeout", 0, "Provider request timeout (default: 60s)")
 	root.AddCommand(newRunCommand(), newProgramCommand(), newScheduleCommand(), newDaemonCommand(), newAgentCommand(), newChangesCommand(), newArtifactsCommand(), newToolsCommand(), newSessionCommand(), newMemoryCommand())
 	return root
 }
@@ -55,11 +56,16 @@ func configureRuntime(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("read log format: %w", err)
 	}
+	requestTimeout, err := flags.GetDuration("request-timeout")
+	if err != nil {
+		return fmt.Errorf("read request timeout: %w", err)
+	}
 	cfg, err := config.Load(config.Options{
-		Home:       home,
-		ConfigFile: configFile,
-		LogLevel:   logLevel,
-		LogFormat:  logFormat,
+		Home:           home,
+		ConfigFile:     configFile,
+		LogLevel:       logLevel,
+		LogFormat:      logFormat,
+		RequestTimeout: requestTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -92,11 +98,16 @@ func loadProviderConfig(cmd *cobra.Command, provider, model string) (config.Conf
 	if err != nil {
 		return config.Config{}, fmt.Errorf("read config path: %w", err)
 	}
+	requestTimeout, err := flags.GetDuration("request-timeout")
+	if err != nil {
+		return config.Config{}, fmt.Errorf("read request timeout: %w", err)
+	}
 	return config.Load(config.Options{
-		Home:       home,
-		ConfigFile: configFile,
-		Provider:   provider,
-		Model:      model,
+		Home:           home,
+		ConfigFile:     configFile,
+		Provider:       provider,
+		Model:          model,
+		RequestTimeout: requestTimeout,
 	})
 }
 

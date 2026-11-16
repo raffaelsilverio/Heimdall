@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func clearEnvironment(t *testing.T) {
@@ -14,6 +15,7 @@ func clearEnvironment(t *testing.T) {
 		"HEIMDALL_MODEL",
 		"HEIMDALL_LOG_LEVEL",
 		"HEIMDALL_LOG_FORMAT",
+		"HEIMDALL_REQUEST_TIMEOUT",
 		"HEIMDALL_HOME",
 		"OPENAI_API_KEY",
 		"OPENCODE_API_KEY",
@@ -54,6 +56,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.FilePath != "" {
 		t.Errorf("FilePath = %q, want empty", cfg.FilePath)
 	}
+	if cfg.RequestTimeout != DefaultRequestTimeout {
+		t.Errorf("RequestTimeout = %s, want %s", cfg.RequestTimeout, DefaultRequestTimeout)
+	}
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
@@ -62,6 +67,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("HEIMDALL_MODEL", " test-model ")
 	t.Setenv("HEIMDALL_LOG_LEVEL", "DEBUG")
 	t.Setenv("HEIMDALL_LOG_FORMAT", "json")
+	t.Setenv("HEIMDALL_REQUEST_TIMEOUT", "45s")
 	t.Setenv("OPENCODE_API_KEY", " test-key ")
 
 	cfg, err := Load(Options{Home: t.TempDir()})
@@ -84,6 +90,9 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if cfg.LogFormat != "json" {
 		t.Errorf("LogFormat = %q, want json", cfg.LogFormat)
 	}
+	if cfg.RequestTimeout != 45*time.Second {
+		t.Errorf("RequestTimeout = %s, want 45s", cfg.RequestTimeout)
+	}
 }
 
 func TestLoadFromConfigFile(t *testing.T) {
@@ -94,6 +103,7 @@ provider: opencode
 model: file-model
 log_level: warn
 log_format: json
+request_timeout: 30s
 `)
 
 	cfg, err := Load(Options{Home: home})
@@ -110,6 +120,9 @@ log_format: json
 	if cfg.LogLevel != "warn" {
 		t.Errorf("LogLevel = %q, want warn", cfg.LogLevel)
 	}
+	if cfg.RequestTimeout != 30*time.Second {
+		t.Errorf("RequestTimeout = %s, want 30s", cfg.RequestTimeout)
+	}
 	if cfg.FilePath != path {
 		t.Errorf("FilePath = %q, want %q", cfg.FilePath, path)
 	}
@@ -122,17 +135,20 @@ func TestLoadPrecedence(t *testing.T) {
 provider: openai
 model: file-model
 log_level: warn
+request_timeout: 30s
 `)
 	t.Setenv("HEIMDALL_PROVIDER", "opencode")
 	t.Setenv("HEIMDALL_MODEL", "environment-model")
 	t.Setenv("HEIMDALL_LOG_LEVEL", "error")
+	t.Setenv("HEIMDALL_REQUEST_TIMEOUT", "45s")
 
 	cfg, err := Load(Options{
-		Home:      home,
-		Provider:  "openai",
-		Model:     "flag-model",
-		LogLevel:  "debug",
-		LogFormat: "json",
+		Home:           home,
+		Provider:       "openai",
+		Model:          "flag-model",
+		LogLevel:       "debug",
+		LogFormat:      "json",
+		RequestTimeout: 15 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
@@ -149,6 +165,9 @@ log_level: warn
 	}
 	if cfg.LogFormat != "json" {
 		t.Errorf("LogFormat = %q, want flag override json", cfg.LogFormat)
+	}
+	if cfg.RequestTimeout != 15*time.Second {
+		t.Errorf("RequestTimeout = %s, want flag override 15s", cfg.RequestTimeout)
 	}
 }
 
@@ -205,6 +224,34 @@ func TestLoadRejectsUnsupportedValues(t *testing.T) {
 			env:     map[string]string{"HEIMDALL_LOG_LEVEL": "trace"},
 			want:    "unsupported log level",
 		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for name, value := range test.env {
+				t.Setenv(name, value)
+			}
+			options := test.options
+			options.Home = t.TempDir()
+			_, err := Load(options)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidRequestTimeout(t *testing.T) {
+	clearEnvironment(t)
+	tests := []struct {
+		name    string
+		options Options
+		env     map[string]string
+		want    string
+	}{
+		{name: "not a duration", options: Options{RequestTimeout: 0}, env: map[string]string{"HEIMDALL_REQUEST_TIMEOUT": "abc"}, want: "invalid request timeout"},
+		{name: "below minimum", options: Options{RequestTimeout: 500 * time.Millisecond}, want: "must be between"},
+		{name: "above maximum", options: Options{RequestTimeout: 11 * time.Minute}, want: "must be between"},
+		{name: "without unit", options: Options{}, env: map[string]string{"HEIMDALL_REQUEST_TIMEOUT": "30"}, want: "invalid request timeout"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

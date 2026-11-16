@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -18,6 +19,10 @@ const (
 	DefaultProvider  = ProviderOpenAI
 	DefaultLogLevel  = "info"
 	DefaultLogFormat = "text"
+
+	DefaultRequestTimeout = 60 * time.Second
+	MinRequestTimeout     = time.Second
+	MaxRequestTimeout     = 10 * time.Minute
 
 	// ConfigFileName is the file looked up inside the Heimdall home directory
 	// when no explicit --config path is provided.
@@ -32,12 +37,13 @@ var apiKeyEnvironment = map[string]string{
 // Config holds resolved runtime configuration. API keys are always read from
 // the environment so they are never stored in the config file.
 type Config struct {
-	Provider  string
-	Model     string
-	APIKey    string
-	LogLevel  string
-	LogFormat string
-	FilePath  string
+	Provider       string
+	Model          string
+	APIKey         string
+	LogLevel       string
+	LogFormat      string
+	RequestTimeout time.Duration
+	FilePath       string
 }
 
 // Options contains command-line overrides. Empty values fall back to the
@@ -53,6 +59,8 @@ type Options struct {
 	Model      string
 	LogLevel   string
 	LogFormat  string
+	// RequestTimeout overrides the provider request timeout when positive.
+	RequestTimeout time.Duration
 }
 
 // Home resolves the Heimdall data directory.
@@ -79,6 +87,7 @@ func Load(options Options) (Config, error) {
 	loader.SetDefault("provider", DefaultProvider)
 	loader.SetDefault("log_level", DefaultLogLevel)
 	loader.SetDefault("log_format", DefaultLogFormat)
+	loader.SetDefault("request_timeout", DefaultRequestTimeout.String())
 	loader.SetEnvPrefix("HEIMDALL")
 	loader.AutomaticEnv()
 	if filePath != "" {
@@ -100,13 +109,22 @@ func Load(options Options) (Config, error) {
 	if format := normalize(options.LogFormat); format != "" {
 		loader.Set("log_format", format)
 	}
+	if options.RequestTimeout > 0 {
+		loader.Set("request_timeout", options.RequestTimeout.String())
+	}
+
+	requestTimeout, err := parseRequestTimeout(loader.GetString("request_timeout"))
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
-		Provider:  normalize(loader.GetString("provider")),
-		Model:     strings.TrimSpace(loader.GetString("model")),
-		LogLevel:  normalize(loader.GetString("log_level")),
-		LogFormat: normalize(loader.GetString("log_format")),
-		FilePath:  filePath,
+		Provider:       normalize(loader.GetString("provider")),
+		Model:          strings.TrimSpace(loader.GetString("model")),
+		LogLevel:       normalize(loader.GetString("log_level")),
+		LogFormat:      normalize(loader.GetString("log_format")),
+		RequestTimeout: requestTimeout,
+		FilePath:       filePath,
 	}
 	if err := config.validate(); err != nil {
 		return Config{}, err
@@ -153,6 +171,20 @@ func (config Config) validate() error {
 		return fmt.Errorf("unsupported log format %q: use text or json", config.LogFormat)
 	}
 	return nil
+}
+
+func parseRequestTimeout(value string) (time.Duration, error) {
+	timeout, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("invalid request timeout %q: use a duration such as 60s", value)
+	}
+	if timeout < MinRequestTimeout || timeout > MaxRequestTimeout {
+		return 0, fmt.Errorf(
+			"request timeout %s must be between %s and %s",
+			timeout, MinRequestTimeout, MaxRequestTimeout,
+		)
+	}
+	return timeout, nil
 }
 
 func resolveConfigFile(options Options) (string, error) {

@@ -43,7 +43,7 @@ func newAgentCycleCommand() *cobra.Command {
 			if cfg.Model == "" {
 				return errors.New("planner model is required; use --model, HEIMDALL_MODEL or the configured model")
 			}
-			model, err := providers.New(cfg.Provider, cfg.APIKey)
+			model, err := providers.NewWithTimeout(cfg.Provider, cfg.APIKey, cfg.RequestTimeout)
 			if err != nil {
 				return err
 			}
