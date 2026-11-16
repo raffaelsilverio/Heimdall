@@ -24,6 +24,10 @@ const (
 	MinRequestTimeout     = time.Second
 	MaxRequestTimeout     = 10 * time.Minute
 
+	DefaultContextMaxBytes = 256 << 10
+	MinContextMaxBytes     = 16 << 10
+	MaxContextMaxBytes     = 1 << 20
+
 	// ConfigFileName is the file looked up inside the Heimdall home directory
 	// when no explicit --config path is provided.
 	ConfigFileName = "config.yaml"
@@ -37,13 +41,14 @@ var apiKeyEnvironment = map[string]string{
 // Config holds resolved runtime configuration. API keys are always read from
 // the environment so they are never stored in the config file.
 type Config struct {
-	Provider       string
-	Model          string
-	APIKey         string
-	LogLevel       string
-	LogFormat      string
-	RequestTimeout time.Duration
-	FilePath       string
+	Provider        string
+	Model           string
+	APIKey          string
+	LogLevel        string
+	LogFormat       string
+	RequestTimeout  time.Duration
+	ContextMaxBytes int
+	FilePath        string
 }
 
 // Options contains command-line overrides. Empty values fall back to the
@@ -61,6 +66,8 @@ type Options struct {
 	LogFormat  string
 	// RequestTimeout overrides the provider request timeout when positive.
 	RequestTimeout time.Duration
+	// ContextMaxBytes overrides the conversation context budget when positive.
+	ContextMaxBytes int
 }
 
 // Home resolves the Heimdall data directory.
@@ -88,6 +95,7 @@ func Load(options Options) (Config, error) {
 	loader.SetDefault("log_level", DefaultLogLevel)
 	loader.SetDefault("log_format", DefaultLogFormat)
 	loader.SetDefault("request_timeout", DefaultRequestTimeout.String())
+	loader.SetDefault("context_max_bytes", DefaultContextMaxBytes)
 	loader.SetEnvPrefix("HEIMDALL")
 	loader.AutomaticEnv()
 	if filePath != "" {
@@ -112,6 +120,9 @@ func Load(options Options) (Config, error) {
 	if options.RequestTimeout > 0 {
 		loader.Set("request_timeout", options.RequestTimeout.String())
 	}
+	if options.ContextMaxBytes > 0 {
+		loader.Set("context_max_bytes", options.ContextMaxBytes)
+	}
 
 	requestTimeout, err := parseRequestTimeout(loader.GetString("request_timeout"))
 	if err != nil {
@@ -119,12 +130,13 @@ func Load(options Options) (Config, error) {
 	}
 
 	config := Config{
-		Provider:       normalize(loader.GetString("provider")),
-		Model:          strings.TrimSpace(loader.GetString("model")),
-		LogLevel:       normalize(loader.GetString("log_level")),
-		LogFormat:      normalize(loader.GetString("log_format")),
-		RequestTimeout: requestTimeout,
-		FilePath:       filePath,
+		Provider:        normalize(loader.GetString("provider")),
+		Model:           strings.TrimSpace(loader.GetString("model")),
+		LogLevel:        normalize(loader.GetString("log_level")),
+		LogFormat:       normalize(loader.GetString("log_format")),
+		RequestTimeout:  requestTimeout,
+		ContextMaxBytes: loader.GetInt("context_max_bytes"),
+		FilePath:        filePath,
 	}
 	if err := config.validate(); err != nil {
 		return Config{}, err
@@ -169,6 +181,12 @@ func (config Config) validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("unsupported log format %q: use text or json", config.LogFormat)
+	}
+	if config.ContextMaxBytes < MinContextMaxBytes || config.ContextMaxBytes > MaxContextMaxBytes {
+		return fmt.Errorf(
+			"context max bytes %d must be between %d and %d",
+			config.ContextMaxBytes, MinContextMaxBytes, MaxContextMaxBytes,
+		)
 	}
 	return nil
 }

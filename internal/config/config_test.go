@@ -16,6 +16,7 @@ func clearEnvironment(t *testing.T) {
 		"HEIMDALL_LOG_LEVEL",
 		"HEIMDALL_LOG_FORMAT",
 		"HEIMDALL_REQUEST_TIMEOUT",
+		"HEIMDALL_CONTEXT_MAX_BYTES",
 		"HEIMDALL_HOME",
 		"OPENAI_API_KEY",
 		"OPENCODE_API_KEY",
@@ -59,6 +60,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RequestTimeout != DefaultRequestTimeout {
 		t.Errorf("RequestTimeout = %s, want %s", cfg.RequestTimeout, DefaultRequestTimeout)
 	}
+	if cfg.ContextMaxBytes != DefaultContextMaxBytes {
+		t.Errorf("ContextMaxBytes = %d, want %d", cfg.ContextMaxBytes, DefaultContextMaxBytes)
+	}
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
@@ -68,6 +72,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("HEIMDALL_LOG_LEVEL", "DEBUG")
 	t.Setenv("HEIMDALL_LOG_FORMAT", "json")
 	t.Setenv("HEIMDALL_REQUEST_TIMEOUT", "45s")
+	t.Setenv("HEIMDALL_CONTEXT_MAX_BYTES", "32768")
 	t.Setenv("OPENCODE_API_KEY", " test-key ")
 
 	cfg, err := Load(Options{Home: t.TempDir()})
@@ -93,6 +98,9 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if cfg.RequestTimeout != 45*time.Second {
 		t.Errorf("RequestTimeout = %s, want 45s", cfg.RequestTimeout)
 	}
+	if cfg.ContextMaxBytes != 32768 {
+		t.Errorf("ContextMaxBytes = %d, want 32768", cfg.ContextMaxBytes)
+	}
 }
 
 func TestLoadFromConfigFile(t *testing.T) {
@@ -104,6 +112,7 @@ model: file-model
 log_level: warn
 log_format: json
 request_timeout: 30s
+context_max_bytes: 65536
 `)
 
 	cfg, err := Load(Options{Home: home})
@@ -123,6 +132,9 @@ request_timeout: 30s
 	if cfg.RequestTimeout != 30*time.Second {
 		t.Errorf("RequestTimeout = %s, want 30s", cfg.RequestTimeout)
 	}
+	if cfg.ContextMaxBytes != 65536 {
+		t.Errorf("ContextMaxBytes = %d, want 65536", cfg.ContextMaxBytes)
+	}
 	if cfg.FilePath != path {
 		t.Errorf("FilePath = %q, want %q", cfg.FilePath, path)
 	}
@@ -136,19 +148,22 @@ provider: openai
 model: file-model
 log_level: warn
 request_timeout: 30s
+context_max_bytes: 32768
 `)
 	t.Setenv("HEIMDALL_PROVIDER", "opencode")
 	t.Setenv("HEIMDALL_MODEL", "environment-model")
 	t.Setenv("HEIMDALL_LOG_LEVEL", "error")
 	t.Setenv("HEIMDALL_REQUEST_TIMEOUT", "45s")
+	t.Setenv("HEIMDALL_CONTEXT_MAX_BYTES", "65536")
 
 	cfg, err := Load(Options{
-		Home:           home,
-		Provider:       "openai",
-		Model:          "flag-model",
-		LogLevel:       "debug",
-		LogFormat:      "json",
-		RequestTimeout: 15 * time.Second,
+		Home:            home,
+		Provider:        "openai",
+		Model:           "flag-model",
+		LogLevel:        "debug",
+		LogFormat:       "json",
+		RequestTimeout:  15 * time.Second,
+		ContextMaxBytes: 16384,
 	})
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
@@ -168,6 +183,9 @@ request_timeout: 30s
 	}
 	if cfg.RequestTimeout != 15*time.Second {
 		t.Errorf("RequestTimeout = %s, want flag override 15s", cfg.RequestTimeout)
+	}
+	if cfg.ContextMaxBytes != 16384 {
+		t.Errorf("ContextMaxBytes = %d, want flag override 16384", cfg.ContextMaxBytes)
 	}
 }
 
@@ -252,6 +270,33 @@ func TestLoadRejectsInvalidRequestTimeout(t *testing.T) {
 		{name: "below minimum", options: Options{RequestTimeout: 500 * time.Millisecond}, want: "must be between"},
 		{name: "above maximum", options: Options{RequestTimeout: 11 * time.Minute}, want: "must be between"},
 		{name: "without unit", options: Options{}, env: map[string]string{"HEIMDALL_REQUEST_TIMEOUT": "30"}, want: "invalid request timeout"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for name, value := range test.env {
+				t.Setenv(name, value)
+			}
+			options := test.options
+			options.Home = t.TempDir()
+			_, err := Load(options)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidContextBudget(t *testing.T) {
+	clearEnvironment(t)
+	tests := []struct {
+		name    string
+		options Options
+		env     map[string]string
+		want    string
+	}{
+		{name: "not a number", options: Options{}, env: map[string]string{"HEIMDALL_CONTEXT_MAX_BYTES": "abc"}, want: "must be between"},
+		{name: "below minimum", options: Options{ContextMaxBytes: 1024}, want: "must be between"},
+		{name: "above maximum", options: Options{ContextMaxBytes: 2 << 20}, want: "must be between"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

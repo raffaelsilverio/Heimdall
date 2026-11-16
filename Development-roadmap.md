@@ -106,16 +106,20 @@ Um item só deve ser marcado quando o **gate** da fase for cumprido. O detalhe d
 
 ### Fase 2 — Autonomous Agent Runtime
 
-- [ ] Ciclo do agente: objetivo → plano → ação → avaliação
-- [ ] Gestão de contexto, histórico e compressão
-- [ ] Function Calling / tool calling
-- [ ] Limites de iteração, timeouts e cancelamento
-- [ ] Planner interno: tarefas, dependências e replan
-- [ ] Consulta à memória antes de planear
-- [ ] **Gate:** o agente conclui uma tarefa simples e para nos limites definidos
+- [x] Ciclo do agente: objetivo → plano → ação → avaliação
+- [x] Gestão de contexto, histórico e compressão
+- [x] Limites de iteração, timeouts e cancelamento
+- [x] Planner interno: tarefas, dependências e replan
+- [x] Consulta à memória antes de planear
+- [x] **Gate:** o agente conclui uma tarefa simples e para nos limites definidos
+
+**Evidência (2026-11-16):** `make check` verde. `RunAdaptive` relê scope, policy e budgets a cada passo, pede uma ação por chamada, valida, executa e realimenta o resultado; `TestAdaptiveCycleUsesOnlyBoundedResultsAndStopsAtModelDecision` prova a execução de duas ações e a paragem em `planner_stopped` ao atingir o limite. O contexto é limitado por `context_max_bytes` (16 KiB–1 MiB), com truncagem determinística dos turnos antigos, marcador explícito e auditoria em log/metadata (`internal/agent/context.go`). `SIGINT`/`SIGTERM` cancelam toda a CLI e fecham action runs/cycle jobs em curso como `failed` (`TestAdaptiveCycleClosesFailedRunOnCancellation`). A memória é opt-in, same-program, freshness-filtered e auditada. O planner aceita planos planos ou um grafo de até 10 tarefas com `depends_on`: valida ids únicos, dependências existentes e ausência de ciclos, achata as ações em ordem topológica determinística e regista as tarefas na validação de policy (`internal/agent/tasks.go`, `TestOrderPlanTasksRunsDependenciesFirst`, `TestGeneratePlanOrdersTasksAndRecordsSummaries`). O replan continua passo-a-passo no ciclo adaptativo; cada novo passo volta a passar por policy e budgets.
+
+**Reclassificado:** Function Calling / tool calling nativo foi movido para a Fase 3, porque depende do Tool Registry e do schema de ferramentas. O contrato atual continua a ser JSON próprio (`{"actions":[...]}` ou `{"tasks":[...]}`) sem `tools` no `providers.Request`.
 
 ### Fase 3 — Tool Registry e Execution Layer
 
+- [ ] Function Calling / tool calling nativo (reclassificado da Fase 2)
 - [ ] Metadados e schemas de ferramentas
 - [ ] Registo, consulta e validação de argumentos
 - [ ] Execução Go/Python/Shell com timeouts e limites de recursos

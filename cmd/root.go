@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/logging"
@@ -16,8 +19,12 @@ import (
 
 type configContextKey struct{}
 
+// Execute runs the CLI with a context cancelled by SIGINT or SIGTERM. Commands
+// that support cancellation close their in-flight work before returning.
 func Execute() error {
-	return NewRootCommand().Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return NewRootCommand().ExecuteContext(ctx)
 }
 
 func NewRootCommand() *cobra.Command {
@@ -34,6 +41,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().String("log-level", "", "Log level: debug, info, warn or error (default: info)")
 	root.PersistentFlags().String("log-format", "", "Log format: text or json (default: text)")
 	root.PersistentFlags().Duration("request-timeout", 0, "Provider request timeout (default: 60s)")
+	root.PersistentFlags().Int("context-max-bytes", 0, "Maximum bytes of conversation context sent to a model (default: 262144)")
 	root.AddCommand(newRunCommand(), newProgramCommand(), newScheduleCommand(), newDaemonCommand(), newAgentCommand(), newChangesCommand(), newArtifactsCommand(), newToolsCommand(), newSessionCommand(), newMemoryCommand())
 	return root
 }
@@ -60,12 +68,17 @@ func configureRuntime(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("read request timeout: %w", err)
 	}
+	contextMaxBytes, err := flags.GetInt("context-max-bytes")
+	if err != nil {
+		return fmt.Errorf("read context budget: %w", err)
+	}
 	cfg, err := config.Load(config.Options{
-		Home:           home,
-		ConfigFile:     configFile,
-		LogLevel:       logLevel,
-		LogFormat:      logFormat,
-		RequestTimeout: requestTimeout,
+		Home:            home,
+		ConfigFile:      configFile,
+		LogLevel:        logLevel,
+		LogFormat:       logFormat,
+		RequestTimeout:  requestTimeout,
+		ContextMaxBytes: contextMaxBytes,
 	})
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -102,12 +115,17 @@ func loadProviderConfig(cmd *cobra.Command, provider, model string) (config.Conf
 	if err != nil {
 		return config.Config{}, fmt.Errorf("read request timeout: %w", err)
 	}
+	contextMaxBytes, err := flags.GetInt("context-max-bytes")
+	if err != nil {
+		return config.Config{}, fmt.Errorf("read context budget: %w", err)
+	}
 	return config.Load(config.Options{
-		Home:           home,
-		ConfigFile:     configFile,
-		Provider:       provider,
-		Model:          model,
-		RequestTimeout: requestTimeout,
+		Home:            home,
+		ConfigFile:      configFile,
+		Provider:        provider,
+		Model:           model,
+		RequestTimeout:  requestTimeout,
+		ContextMaxBytes: contextMaxBytes,
 	})
 }
 

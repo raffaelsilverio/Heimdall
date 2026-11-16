@@ -118,6 +118,60 @@ func TestGenerateNextProposalReceivesOnlyBoundedPriorResultAndRemainingBudgets(t
 	}
 }
 
+func TestGeneratePlanOrdersTasksAndRecordsSummaries(t *testing.T) {
+	now := time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC)
+	policyContext := activePolicyContext(t, now)
+	policyContext.MaxProposals = 3
+	hash := policyContext.Program.ScopeHash
+	model := &fakePlanModel{response: providers.Response{Content: `{"tasks":[` +
+		`{"id":"probe","objective":"Probe the login route","depends_on":["discover"],"actions":[{"stage":"web","scope_hash":"` + hash + `","targets":["https://app.example.test/login"],"estimated_calls":1}]},` +
+		`{"id":"discover","objective":"Discover the login route","actions":[{"stage":"web","scope_hash":"` + hash + `","targets":["https://app.example.test/"],"estimated_calls":1}]}` +
+		`]}`}}
+	draft, err := GeneratePlan(context.Background(), model, "test-model", policyContext, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Actions) != 2 || draft.Actions[0].TaskID != "discover" || draft.Actions[1].TaskID != "probe" {
+		t.Fatalf("task actions were not flattened in dependency order: %+v", draft.Actions)
+	}
+	if len(draft.Tasks) != 2 || draft.Tasks[0].ID != "discover" || draft.Tasks[1].DependsOn[0] != "discover" {
+		t.Fatalf("task summaries were not recorded: %+v", draft.Tasks)
+	}
+	validation, err := (PolicyAwarePlanner{Policy: ScopeActionPolicy{}}).ValidatePlan(context.Background(), policyContext, draft, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validation.PolicyChecksPassed || len(validation.Tasks) != 2 || len(validation.Decisions) != 2 {
+		t.Fatalf("task plan was not policy-checked as a graph: %+v", validation)
+	}
+	if validation.Decisions[0].Proposal.TaskID != "discover" {
+		t.Fatalf("first policy decision was not the dependency: %+v", validation.Decisions[0])
+	}
+}
+
+func TestGeneratePlanRejectsAmbiguousTaskEnvelopes(t *testing.T) {
+	now := time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC)
+	policyContext := activePolicyContext(t, now)
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "both arrays", content: `{"actions":[],"tasks":[]}`, want: "either actions or tasks"},
+		{name: "no arrays", content: `{}`, want: "missing the actions or tasks array"},
+		{name: "unknown field", content: `{"tasks":[{"id":"t1","objective":"x","actions":[{"stage":"web"}],"unknown":true}]}`, want: "unknown field"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := &fakePlanModel{response: providers.Response{Content: test.content}}
+			_, err := GeneratePlan(context.Background(), model, "test-model", policyContext, nil, now)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("GeneratePlan error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestPolicyAwarePlannerFiltersGeneratedProposalsWithoutExecuting(t *testing.T) {
 	now := time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC)
 	policyContext := activePolicyContext(t, now)

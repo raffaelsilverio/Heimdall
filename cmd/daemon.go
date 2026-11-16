@@ -1,11 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
@@ -55,8 +53,10 @@ func newDaemonCommand() *cobra.Command {
 				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Processed %d work item(s) (scheduled recon, deterministic triage, and/or consented adaptive cycles).\n", count)
 				return err
 			}
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
 			return daemon.Run(ctx)
 		},
 	}

@@ -29,7 +29,7 @@ Objetivo: permitir que o modelo planeie e execute tarefas através de ferramenta
 
 - Implementar o ciclo do agente.
 - Gerir mensagens, histórico e contexto.
-- Implementar Function Calling / tool calling.
+- Implementar Function Calling / tool calling. *(Reclassificado para a Fase 3 em 2026-11-16, por depender do Tool Registry.)*
 - Controlar iterações, timeouts e limites.
 - Implementar cancelamento.
 - Registar execuções.
@@ -44,6 +44,7 @@ Objetivo: permitir que o modelo planeie e execute tarefas através de ferramenta
 Objetivo: criar uma infraestrutura consistente de ferramentas.
 
 - Criar o Tool Registry.
+- Implementar Function Calling / tool calling nativo com schemas do Registry.
 - Definir schemas e metadados.
 - Registar ferramentas.
 - Validar argumentos.

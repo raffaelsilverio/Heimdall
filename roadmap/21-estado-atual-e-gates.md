@@ -22,6 +22,8 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - Configuração resolvida por precedência flag > ambiente > `<home>/config.yaml` > defaults, com validação fail-closed de provider e logging; API keys continuam apenas no ambiente.
 - Logger `slog` global configurável por `--log-level`/`--log-format` (`text` ou `json`), partilhado por CLI, daemon e scheduler.
 - Providers OpenAI e OpenCode Zen com timeout por pedido configurável (`1s`–`10m`), rótulos de erro por provider e erros sentinela para auth, rate limit, 5xx, timeout e resposta inválida.
+- `SIGINT`/`SIGTERM` cancelam toda a CLI; action runs e cycle jobs em curso são fechados como `failed` com uma janela de persistência não cancelável.
+- Contexto de conversação limitado por `context_max_bytes` (16 KiB–1 MiB, default 256 KiB), com truncagem determinística dos turnos mais antigos, marcador explícito de omissão e contagens auditadas em log e metadata; system messages e o prompt mais recente nunca são descartados. Não há sumarização por modelo.
 - Programas com autorização/expiração, scope tipado, portas, precedência de exclusão, schedules e limites.
 - Sincronização HackerOne read-only com snapshots, revisão pendente e pausa; a aprovação nunca reativa automaticamente o programa.
 - SQLite/FTS com memória estritamente por `program_id`, proveniência e hashes, validade, supersessão, pesquisa/lista/show/archive/restore.
@@ -35,12 +37,15 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - `agent execute` executa um plano explícito sequencial; `agent cycle` faz planeamento adaptativo síncrono, uma proposta por chamada do modelo, limitado por steps/budgets e com opt-ins separados para egress e requests ativos.
 - Consentimento persistente e revisto por programa para ciclos futuros; `agent_cycle_jobs` e worker no daemon processam apenas eventos materiais **novos** criados enquanto o consentimento está habilitado. Há quotas UTC de ciclos e requests reservados, leases e falha fechada sem replay automático.
 - Inspeção e revisão de action runs e cycle jobs (`agent action-runs`, `agent action-run`, `agent action-review`, `agent cycle-jobs`, `agent cycle-review`).
+- O planner aceita uma lista plana de ações ou um grafo de até 10 tarefas com `depends_on`, valida ids/dependências/ciclos e achata as ações em ordem topológica determinística; a validação de policy regista as tarefas revistas. `agent plan` e `agent execute` aceitam `actions` ou `tasks` (nunca ambos).
 
 ## Limites atuais
 
 - O daemon só executa ciclos quando existe consentimento persistente válido; programas e consentimentos novos ficam desabilitados por omissão. Não há backfill de eventos anteriores ao consentimento.
 - A única ação agentic é o probe HTTP nativo. Os adaptadores existentes via subprocesso continuam disponíveis nos fluxos normais de recon, mas **não** no executor agentic, porque o tráfego interno não passa pelo meter Go.
 - Os providers não fazem retry automático; 429, 5xx e timeouts são devolvidos ao chamador como erros tipados para decisão explícita.
+- A compressão de contexto é determinística (descarte dos turnos mais antigos); não há sumarização por modelo.
+- Function Calling / tool calling nativo não está implementado: o contrato do planner é JSON próprio (`actions` ou `tasks`) e não envia `tools` ao provider. Foi reclassificado para a Fase 3, dependente do Tool Registry.
 - Não há modo de edição de repositório, sandbox de código, workflow de findings reproduzidos/validados nem submissão de reports.
 - `finding_candidate` é uma deteção de scanner, não prova de vulnerabilidade. A memória nunca autoriza ações.
 

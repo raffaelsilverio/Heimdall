@@ -51,13 +51,9 @@ func newAgentExecuteCommand() *cobra.Command {
 				}
 				return fmt.Errorf("read trailing agent action data: %w", err)
 			}
-			if len(input.Actions) == 0 || len(input.Actions) > 20 {
-				return errors.New("native executor accepts between 1 and 20 actions")
-			}
-			for _, action := range input.Actions {
-				if action.Stage != recon.StageWeb {
-					return fmt.Errorf("the initial native executor supports only stage %q", recon.StageWeb)
-				}
+			actions, err := resolveExecutableActions(input)
+			if err != nil {
+				return err
 			}
 
 			database, err := openStore(cmd)
@@ -67,7 +63,7 @@ func newAgentExecuteCommand() *cobra.Command {
 			defer database.Close()
 			result, err := (execution.Executor{
 				Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Policy: agent.ScopeActionPolicy{}, Clock: clock.System{},
-			}).ExecutePlan(cmd.Context(), args[0], actionRunID, input.Actions, time.Now().UTC())
+			}).ExecutePlan(cmd.Context(), args[0], actionRunID, actions, time.Now().UTC())
 			if result.ActionRunID != "" {
 				encoded, encodeErr := json.MarshalIndent(result, "", "  ")
 				if encodeErr != nil {
@@ -85,4 +81,22 @@ func newAgentExecuteCommand() *cobra.Command {
 	_ = command.MarkFlagRequired("action-run-id")
 	_ = command.MarkFlagRequired("confirm-active-requests")
 	return command
+}
+
+// resolveExecutableActions flattens an action list or task graph and enforces
+// the native executor's action-count and stage limits.
+func resolveExecutableActions(input agentPlanInput) ([]agent.ActionProposal, error) {
+	actions, _, err := input.resolve()
+	if err != nil {
+		return nil, err
+	}
+	if len(actions) == 0 || len(actions) > 20 {
+		return nil, errors.New("native executor accepts between 1 and 20 actions")
+	}
+	for _, action := range actions {
+		if action.Stage != recon.StageWeb {
+			return nil, fmt.Errorf("the initial native executor supports only stage %q", recon.StageWeb)
+		}
+	}
+	return actions, nil
 }

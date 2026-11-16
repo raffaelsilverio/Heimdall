@@ -40,6 +40,16 @@ func TestRootRejectsInvalidRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestRootRejectsInvalidContextBudget(t *testing.T) {
+	root := NewRootCommand()
+	root.SetArgs([]string{"--context-max-bytes", "1024", "tools", "list"})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "must be between") {
+		t.Fatalf("Execute error = %v, want context budget range error", err)
+	}
+}
+
 func TestRootReadsConfigFileFromHome(t *testing.T) {
 	t.Setenv("HEIMDALL_PROVIDER", "")
 	home := t.TempDir()

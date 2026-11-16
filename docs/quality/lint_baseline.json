@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "rationale": "Split agent_action_ledger, executor, store memory/run lifecycle, and store tests into focused files without changing behavior; existing findings moved with their functions and no new debt was introduced.",
+  "rationale": "Planner task-graph refactor extracted complexity helpers, removing one cognitive-complexity finding",
   "known_issue_totals": {
     "errcheck": 35,
-    "gocognit": 49,
+    "gocognit": 48,
     "gocyclo": 8,
     "gosec": 11
   },
@@ -41,7 +41,6 @@
       "internal/agent/execution/cycle_worker.go": 1,
       "internal/agent/execution/executor.go": 1,
       "internal/agent/execution/executor_adaptive.go": 1,
-      "internal/agent/planner.go": 1,
       "internal/agent/policy.go": 1,
       "internal/assessment/program.go": 1,
       "internal/recon/catalog.go": 1,
@@ -90,10 +89,10 @@
         "newAgentCycleCommand": 25
       },
       "cmd/agent_execute.go": {
-        "newAgentExecuteCommand": 33
+        "newAgentExecuteCommand": 27
       },
       "cmd/agent_plan.go": {
-        "newAgentPlanCommand": 32
+        "newAgentPlanCommand": 22
       },
       "cmd/agent_propose.go": {
         "newAgentProposeCommand": 32
@@ -103,7 +102,7 @@
         "writeProgramSourceSnapshot": 52
       },
       "cmd/run.go": {
-        "newRunCommand": 75
+        "newRunCommand": 25
       },
       "cmd/tools.go": {
         "newToolsCommand": 34
@@ -120,9 +119,6 @@
       },
       "internal/agent/execution/executor_adaptive.go": {
         "(Executor).runAdaptive": 127
-      },
-      "internal/agent/planner.go": {
-        "GenerateActionProposals": 35
       },
       "internal/agent/policy.go": {
         "(ScopeActionPolicy).Authorize": 24

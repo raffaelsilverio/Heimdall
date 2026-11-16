@@ -17,6 +17,22 @@ const maxAgentPlanInputBytes = 64 << 10
 
 type agentPlanInput struct {
 	Actions []agent.ActionProposal `json:"actions"`
+	Tasks   []agent.PlanTask       `json:"tasks"`
+}
+
+// resolve returns the dependency-ordered actions for a plan that contains
+// either a flat action list or a task graph, never both.
+func (input agentPlanInput) resolve() ([]agent.ActionProposal, []agent.PlanTaskSummary, error) {
+	if input.Actions != nil && input.Tasks != nil {
+		return nil, nil, errors.New("plan input must contain either actions or tasks, not both")
+	}
+	if input.Actions == nil && input.Tasks == nil {
+		return nil, nil, errors.New("plan input is missing the actions or tasks array")
+	}
+	if input.Tasks == nil {
+		return input.Actions, nil, nil
+	}
+	return agent.OrderPlanTasks(input.Tasks)
 }
 
 func newAgentPlanCommand() *cobra.Command {
@@ -46,42 +62,20 @@ func newAgentPlanCommand() *cobra.Command {
 				}
 				return fmt.Errorf("read trailing plan proposal data: %w", err)
 			}
-			if len(input.Actions) > 20 {
-				return errors.New("plan proposal may contain at most 20 actions")
+			actions, tasks, err := input.resolve()
+			if err != nil {
+				return err
+			}
+			if len(actions) == 0 || len(actions) > 20 {
+				return errors.New("plan proposal must contain between 1 and 20 actions")
 			}
 
-			database, err := openStore(cmd)
+			policyContext, err := loadActionPolicyContext(cmd, args[0])
 			if err != nil {
 				return err
 			}
-			defer database.Close()
-			program, err := database.GetProgram(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			policy, err := database.GetProgramAgentPolicy(cmd.Context(), program.ID)
-			if err != nil {
-				return err
-			}
-			pendingReview, err := database.HasPendingProgramSourceReview(cmd.Context(), program.ID)
-			if err != nil {
-				return err
-			}
-			schedules, err := database.ListStageSchedules(cmd.Context(), program.ID)
-			if err != nil {
-				return err
-			}
-			enabledSchedules := make(map[string]recon.StageLimits)
-			for _, schedule := range schedules {
-				if schedule.Enabled {
-					enabledSchedules[schedule.Stage] = schedule.Limits
-				}
-			}
-			result, err := (agent.PolicyAwarePlanner{Policy: agent.ScopeActionPolicy{}}).Validate(
-				cmd.Context(), agent.ActionPolicyContext{
-					Program: program, SourceReviewPending: pendingReview, EnabledSchedules: enabledSchedules,
-					Policy: policy,
-				}, input.Actions, nowUTC(),
+			result, err := (agent.PolicyAwarePlanner{Policy: agent.ScopeActionPolicy{}}).ValidatePlan(
+				cmd.Context(), policyContext, agent.PlanDraft{Actions: actions, Tasks: tasks}, nowUTC(),
 			)
 			if err != nil {
 				return err
@@ -99,4 +93,39 @@ func newAgentPlanCommand() *cobra.Command {
 
 func nowUTC() time.Time {
 	return time.Now().UTC()
+}
+
+// loadActionPolicyContext reads the current program, policy, source-review
+// state and enabled schedules into one validation context.
+func loadActionPolicyContext(cmd *cobra.Command, programID string) (agent.ActionPolicyContext, error) {
+	database, err := openStore(cmd)
+	if err != nil {
+		return agent.ActionPolicyContext{}, err
+	}
+	defer database.Close()
+	program, err := database.GetProgram(cmd.Context(), programID)
+	if err != nil {
+		return agent.ActionPolicyContext{}, err
+	}
+	policy, err := database.GetProgramAgentPolicy(cmd.Context(), program.ID)
+	if err != nil {
+		return agent.ActionPolicyContext{}, err
+	}
+	pendingReview, err := database.HasPendingProgramSourceReview(cmd.Context(), program.ID)
+	if err != nil {
+		return agent.ActionPolicyContext{}, err
+	}
+	schedules, err := database.ListStageSchedules(cmd.Context(), program.ID)
+	if err != nil {
+		return agent.ActionPolicyContext{}, err
+	}
+	enabledSchedules := make(map[string]recon.StageLimits)
+	for _, schedule := range schedules {
+		if schedule.Enabled {
+			enabledSchedules[schedule.Stage] = schedule.Limits
+		}
+	}
+	return agent.ActionPolicyContext{
+		Program: program, SourceReviewPending: pendingReview, EnabledSchedules: enabledSchedules, Policy: policy,
+	}, nil
 }

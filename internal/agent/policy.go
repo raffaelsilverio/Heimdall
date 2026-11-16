@@ -39,6 +39,7 @@ type ActionProposal struct {
 	Targets        []string `json:"targets"`
 	EstimatedCalls int      `json:"estimated_calls"`
 	Rationale      string   `json:"rationale,omitempty"`
+	TaskID         string   `json:"task_id,omitempty"`
 }
 
 type AuthorizedAction struct {
@@ -135,7 +136,7 @@ func (ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPoli
 		Stage: stage, Class: class, Targets: targets, RequestBudget: proposal.EstimatedCalls, Limits: limits,
 		ValidUntil: validUntil, Proposal: ActionProposal{
 			Stage: stage, ScopeHash: proposal.ScopeHash, Targets: append([]string(nil), proposal.Targets...),
-			EstimatedCalls: proposal.EstimatedCalls, Rationale: proposal.Rationale,
+			EstimatedCalls: proposal.EstimatedCalls, Rationale: proposal.Rationale, TaskID: proposal.TaskID,
 		},
 	}, nil
 }

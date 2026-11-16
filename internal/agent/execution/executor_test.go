@@ -244,6 +244,59 @@ func TestAdaptiveCycleUsesOnlyBoundedResultsAndStopsAtModelDecision(t *testing.T
 	}
 }
 
+type cancelingModel struct {
+	cancel context.CancelFunc
+}
+
+func (model cancelingModel) Name() string { return "canceling-model" }
+
+func (model cancelingModel) Generate(_ context.Context, _ providers.Request) (providers.Response, error) {
+	model.cancel()
+	return providers.Response{}, context.Canceled
+}
+
+func TestAdaptiveCycleClosesFailedRunOnCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	database, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "heimdall.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if closeErr := database.Close(); closeErr != nil {
+			t.Errorf("close store: %v", closeErr)
+		}
+	})
+	now := time.Now().UTC().Truncate(time.Second)
+	program := createExecutableProgram(t, database, now, server.URL)
+	if _, err := database.SetProgramAgentPolicy(context.Background(), program.ID, contract.ProgramAgentPolicy{
+		AllowedStages: []string{recon.StageWeb}, AllowedClasses: []contract.ActionClass{contract.ActionSafeActive},
+		MaxActionsPerRun: 1, MaxRequestsPerRun: 1, MaxRequestsPerAction: 1, MaxTargetsPerAction: 1,
+	}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := (Executor{Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Policy: agent.ScopeActionPolicy{}}).
+		RunAdaptive(ctx, program.ID, uuid.NewString(), cancelingModel{cancel: cancel}, "canceling-model", false, 1, now.Add(2*time.Second))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunAdaptive error = %v, want context.Canceled", err)
+	}
+	if result.ActionRunID == "" || result.Status != "failed" {
+		t.Fatalf("cancelled cycle result = %+v, want a failed run with an action run id", result)
+	}
+
+	runs, err := database.ListAgentActionRuns(context.Background(), program.ID, 10)
+	if err != nil {
+		t.Fatalf("list action runs: %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != result.ActionRunID || runs[0].Status != "failed" {
+		t.Fatalf("cancelled action run was not persisted as failed: %+v", runs)
+	}
+}
+
 func createExecutableProgram(t *testing.T, database *store.Store, now time.Time, targetURL string) assessment.Program {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodHead, targetURL, nil)
