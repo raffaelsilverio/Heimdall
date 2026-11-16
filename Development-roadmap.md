@@ -94,13 +94,15 @@ Um item só deve ser marcado quando o **gate** da fase for cumprido. O detalhe d
 
 ### Fase 1 — Core e Providers
 
-- [ ] Rever e estabilizar a estrutura Go existente
-- [ ] CLI consolidada com Cobra
-- [ ] Configuração (Viper) e logging (`slog`)
-- [ ] Interface comum de providers
-- [ ] OpenAI e OpenCode Zen integrados
-- [ ] Testes base e tratamento de erros
-- [ ] **Gate:** providers intercambiáveis sem alterar o Agent Runtime
+- [x] Rever e estabilizar a estrutura Go existente
+- [x] CLI consolidada com Cobra
+- [x] Configuração (Viper) e logging (`slog`)
+- [x] Interface comum de providers
+- [x] OpenAI e OpenCode Zen integrados
+- [x] Testes base e tratamento de erros
+- [x] **Gate:** providers intercambiáveis sem alterar o Agent Runtime
+
+**Evidência (2026-11-16):** `make check` verde (formatação, módulos, arquitetura, tamanho, vet, lint, Staticcheck, govulncheck, testes com race e build). Configuração em `internal/config` (Viper; flag > ambiente > ficheiro > defaults) e logging em `internal/logging` (`slog`). O planner e o executor recebem `providers.Provider`; os testes usam `fakePlanModel` e `adaptiveModelStub`, e a única chamada à factory concreta em runtime é o default injetável de `AgentCycleWorker.NewProvider`.
 
 ### Fase 2 — Autonomous Agent Runtime
 

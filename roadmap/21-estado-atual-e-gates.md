@@ -18,6 +18,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 
 ## Implementado
 
+- Fase 1 (Core e Providers) concluída: CLI Cobra, configuração e logging validados, e providers OpenAI/OpenCode Zen atrás de `providers.Provider`; planner e executor não dependem de implementações concretas.
 - Configuração resolvida por precedência flag > ambiente > `<home>/config.yaml` > defaults, com validação fail-closed de provider e logging; API keys continuam apenas no ambiente.
 - Logger `slog` global configurável por `--log-level`/`--log-format` (`text` ou `json`), partilhado por CLI, daemon e scheduler.
 - Providers OpenAI e OpenCode Zen com timeout por pedido configurável (`1s`–`10m`), rótulos de erro por provider e erros sentinela para auth, rate limit, 5xx, timeout e resposta inválida.
