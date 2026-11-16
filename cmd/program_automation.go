@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -52,7 +51,7 @@ func newProgramAutomationSetCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse --context-egress-expires-at as RFC3339: %w", err)
 			}
-			cfg, err := config.LoadConfig(providerName, modelName)
+			cfg, err := loadProviderConfig(cmd, providerName, modelName)
 			if err != nil {
 				return fmt.Errorf("validate planner provider/model: %w", err)
 			}

@@ -29,12 +29,16 @@ func newDaemonCommand() *cobra.Command {
 				return err
 			}
 			defer database.Close()
-			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
+			home, err := cmd.Root().PersistentFlags().GetString("home")
+			if err != nil {
+				return fmt.Errorf("read Heimdall home: %w", err)
+			}
+			logger := slog.Default()
 			daemon := scheduler.Daemon{
 				Store:        database,
 				Runner:       recon.NewDefaultStageSet(),
 				AgentTriage:  agent.TriageWorker{Store: database},
-				AgentCycles:  execution.AgentCycleWorker{Store: database, Clock: clock.System{}},
+				AgentCycles:  execution.AgentCycleWorker{Store: database, Home: home, Clock: clock.System{}},
 				PollInterval: pollInterval,
 				Logger:       logger,
 				Clock:        clock.System{},

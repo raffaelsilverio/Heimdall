@@ -18,6 +18,7 @@ import (
 
 type AgentCycleWorker struct {
 	Store         *store.Store
+	Home          string
 	BatchSize     int
 	LeaseDuration time.Duration
 	Logger        *slog.Logger
@@ -76,7 +77,11 @@ func (w AgentCycleWorker) RunCycle(ctx context.Context, now time.Time) (int, err
 }
 
 func (w AgentCycleWorker) processLease(ctx context.Context, lease store.AgentCycleLease, leaseDuration time.Duration) error {
-	modelConfig, err := config.LoadConfig(lease.Automation.PlannerProvider, lease.Automation.PlannerModel)
+	modelConfig, err := config.Load(config.Options{
+		Home:     w.Home,
+		Provider: lease.Automation.PlannerProvider,
+		Model:    lease.Automation.PlannerModel,
+	})
 	if err != nil {
 		return w.finishJob(ctx, lease, Result{}, "failed", err)
 	}

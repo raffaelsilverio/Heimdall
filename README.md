@@ -39,6 +39,19 @@ HEIMDALL_OSINT_TOOLS=subfinder,amass,gau heimdall daemon
 
 By default, Heimdall stores `heimdall.db` under `os.UserConfigDir()/heimdall`. Override this with `HEIMDALL_HOME` or the global `--home` flag. The directory and database are restricted to the current user. SQLite is the operational source of truth.
 
+## Configuration
+
+Runtime settings resolve with the precedence **flag > environment > config file > defaults**. Unless `--config` points elsewhere, Heimdall loads `<home>/config.yaml` when it exists; an explicitly selected file must exist, and a malformed or invalid configuration aborts the command.
+
+```yaml
+provider: opencode
+model: <model-id>
+log_level: info
+log_format: json
+```
+
+`provider` must be `openai` or `opencode`, `log_level` one of `debug`, `info`, `warn` or `error`, and `log_format` one of `text` or `json`. The equivalent flags are `--log-level` and `--log-format`; environment overrides are `HEIMDALL_PROVIDER`, `HEIMDALL_MODEL`, `HEIMDALL_LOG_LEVEL` and `HEIMDALL_LOG_FORMAT`. API keys are never read from the config file: `openai` uses `OPENAI_API_KEY` and `opencode` uses `OPENCODE_API_KEY`. The daemon and scheduler emit structured `slog` records using the same level and format.
+
 ## Programs and schedules
 
 Create a program with an authorization reference, an RFC3339 expiry, and at least one included scope entry:

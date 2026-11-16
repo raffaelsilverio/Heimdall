@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
 	"github.com/raffaelsilverio/Heimdall/internal/clock"
-	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/providers"
 	"github.com/spf13/cobra"
@@ -37,12 +36,12 @@ func newAgentCycleCommand() *cobra.Command {
 			if maxSteps < 1 || maxSteps > 20 {
 				return errors.New("--max-steps must be between 1 and 20")
 			}
-			cfg, err := config.LoadConfig(providerName, modelName)
+			cfg, err := loadProviderConfig(cmd, providerName, modelName)
 			if err != nil {
 				return fmt.Errorf("load adaptive planner configuration: %w", err)
 			}
 			if cfg.Model == "" {
-				return errors.New("planner model is required; use --model or HEIMDALL_MODEL")
+				return errors.New("planner model is required; use --model, HEIMDALL_MODEL or the configured model")
 			}
 			model, err := providers.New(cfg.Provider, cfg.APIKey)
 			if err != nil {

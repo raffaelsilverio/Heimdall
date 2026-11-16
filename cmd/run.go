@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
-	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 	"github.com/raffaelsilverio/Heimdall/providers"
 	"github.com/spf13/cobra"
@@ -30,12 +29,12 @@ func newRunCommand() *cobra.Command {
 			if strings.TrimSpace(promptFlag) == "" {
 				return fmt.Errorf("prompt is required; use --prompt")
 			}
-			cfg, err := config.LoadConfig(providerFlag, modelFlag)
+			cfg, err := loadProviderConfig(cmd, providerFlag, modelFlag)
 			if err != nil {
 				return fmt.Errorf("load configuration: %w", err)
 			}
 			if strings.TrimSpace(cfg.Model) == "" {
-				return fmt.Errorf("model is required; use --model or HEIMDALL_MODEL")
+				return fmt.Errorf("model is required; use --model, HEIMDALL_MODEL or the configured model")
 			}
 			provider, err := providers.New(cfg.Provider, cfg.APIKey)
 			if err != nil {

@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
-	"github.com/raffaelsilverio/Heimdall/internal/config"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
 	"github.com/raffaelsilverio/Heimdall/providers"
@@ -67,12 +66,12 @@ func newAgentProposeCommand() *cobra.Command {
 				}
 				memory = boundedPlanMemory(program.ID, memories)
 			}
-			cfg, err := config.LoadConfig(providerName, modelName)
+			cfg, err := loadProviderConfig(cmd, providerName, modelName)
 			if err != nil {
 				return fmt.Errorf("load planner model configuration: %w", err)
 			}
 			if cfg.Model == "" {
-				return errors.New("planner model is required; use --model or HEIMDALL_MODEL")
+				return errors.New("planner model is required; use --model, HEIMDALL_MODEL or the configured model")
 			}
 			model, err := providers.New(cfg.Provider, cfg.APIKey)
 			if err != nil {

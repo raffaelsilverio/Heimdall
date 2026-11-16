@@ -4,7 +4,7 @@ Este documento descreve o estado de implementação conhecido e os critérios de
 
 **Não é um roadmap paralelo.** O roadmap oficial está em `17-roadmap-de-fases.md`; este ficheiro existe para que as fases não repitam trabalho já feito e para que as fronteiras de segurança não se percam.
 
-**Última revisão do estado:** 2026-10-26.
+**Última revisão do estado:** 2026-11-16.
 
 ## Modelo de operação
 
@@ -18,6 +18,8 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 
 ## Implementado
 
+- Configuração resolvida por precedência flag > ambiente > `<home>/config.yaml` > defaults, com validação fail-closed de provider e logging; API keys continuam apenas no ambiente.
+- Logger `slog` global configurável por `--log-level`/`--log-format` (`text` ou `json`), partilhado por CLI, daemon e scheduler.
 - Programas com autorização/expiração, scope tipado, portas, precedência de exclusão, schedules e limites.
 - Sincronização HackerOne read-only com snapshots, revisão pendente e pausa; a aprovação nunca reativa automaticamente o programa.
 - SQLite/FTS com memória estritamente por `program_id`, proveniência e hashes, validade, supersessão, pesquisa/lista/show/archive/restore.
