@@ -38,11 +38,13 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - Consentimento persistente e revisto por programa para ciclos futuros; `agent_cycle_jobs` e worker no daemon processam apenas eventos materiais **novos** criados enquanto o consentimento está habilitado. Há quotas UTC de ciclos e requests reservados, leases e falha fechada sem replay automático.
 - Inspeção e revisão de action runs e cycle jobs (`agent action-runs`, `agent action-run`, `agent action-review`, `agent cycle-jobs`, `agent cycle-review`).
 - O planner aceita uma lista plana de ações ou um grafo de até 10 tarefas com `depends_on`, valida ids/dependências/ciclos e achata as ações em ordem topológica determinística; a validação de policy regista as tarefas revistas. `agent plan` e `agent execute` aceitam `actions` ou `tasks` (nunca ambos).
+- O catálogo agentic é compilado e tipado: `AgentToolSpec` declara estágio, classe (`safe_active`), descrição, limite de targets, schema de argumentos e accounting `one_request_per_target`. O Registry valida metadados, rejeita adapters nulos/ids duplicados, expõe `Specs`/`Lookup` e valida o pedido (stage, targets, budget, comprimentos) antes de executar. `agent tools [--json]` inspeciona o catálogo sem DB, provider, rede ou shell.
 
 ## Limites atuais
 
 - O daemon só executa ciclos quando existe consentimento persistente válido; programas e consentimentos novos ficam desabilitados por omissão. Não há backfill de eventos anteriores ao consentimento.
 - A única ação agentic é o probe HTTP nativo. Os adaptadores existentes via subprocesso continuam disponíveis nos fluxos normais de recon, mas **não** no executor agentic, porque o tráfego interno não passa pelo meter Go.
+- O catálogo agentic é estático: não há carregamento dinâmico, plugins ou execução Go/Python/Shell. Um novo adapter exige compilação, schema revisto e registo explícito.
 - Os providers não fazem retry automático; 429, 5xx e timeouts são devolvidos ao chamador como erros tipados para decisão explícita.
 - A compressão de contexto é determinística (descarte dos turnos mais antigos); não há sumarização por modelo.
 - Function Calling / tool calling nativo não está implementado: o contrato do planner é JSON próprio (`actions` ou `tasks`) e não envia `tools` ao provider. Foi reclassificado para a Fase 3, dependente do Tool Registry.

@@ -119,13 +119,15 @@ Um item só deve ser marcado quando o **gate** da fase for cumprido. O detalhe d
 
 ### Fase 3 — Tool Registry e Execution Layer
 
+- [x] Metadados e schemas de ferramentas
+- [x] Registo, consulta e validação de argumentos (catálogo compilado)
 - [ ] Function Calling / tool calling nativo (reclassificado da Fase 2)
-- [ ] Metadados e schemas de ferramentas
-- [ ] Registo, consulta e validação de argumentos
 - [ ] Execução Go/Python/Shell com timeouts e limites de recursos
 - [ ] Normalização de resultados e preservação de logs
 - [ ] Catálogo de adapters com classe de risco, scope e accounting
 - [ ] **Gate:** nenhuma ferramenta executa fora do Registry
+
+**Evidência parcial (2026-11-17):** `internal/recon/agent_tool_schema.go` define `AgentToolSpec` com `id`, `stage`, `class`, `description`, `max_targets`, argumentos tipados e `accounting`; `Validate` rejeita metadados incompletos, classes não suportadas e argumentos desconhecidos. `NewAgentActionRegistry` valida a lista compilada, rejeita adapters nulos e ids duplicados, e `Specs`/`Lookup` expõem o catálogo ordenado. `AgentActionRegistry.Execute` valida stage, número de targets, budget por target, targets vazios e comprimento máximo **antes** de chamar o adapter; um pedido inválido nunca chega ao transporte. `heimdall agent tools [--json]` lista o catálogo sem base de dados, provider, rede ou shell. Testes: `TestAgentRegistryRejectsInvalidMetadata`, `TestAgentRegistryValidatesRequestBeforeAdapterRuns`, `TestAgentRegistryRejectsUnknownToolBeforeExecution`, `TestAgentToolsListsOnlyTheCompiledAgentCatalog`.
 
 ### Fase 4 — Policy Engine e Program Intelligence
 

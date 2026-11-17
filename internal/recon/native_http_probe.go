@@ -18,8 +18,17 @@ type NativeHTTPProbe struct {
 	Transport http.RoundTripper
 }
 
-func (NativeHTTPProbe) Spec() ToolSpec {
-	return ToolSpec{ID: AgentHTTPProbeID, Stage: StageWeb, Binary: "builtin", Timeout: time.Minute}
+func (NativeHTTPProbe) Spec() AgentToolSpec {
+	return AgentToolSpec{
+		ID: AgentHTTPProbeID, Stage: StageWeb, Class: AgentToolClassSafeActive,
+		Description: "Send one bounded HEAD request per authorized target without redirects, bodies, retries, or a shell.",
+		MaxTargets:  maxAgentToolTargets,
+		Arguments: []ToolArgument{{
+			Name: "targets", Type: ToolArgumentStringList, Required: true,
+			MaxItems: maxAgentToolTargets, MaxLength: 2048,
+		}},
+		Accounting: AgentToolAccountingOnePerTarget,
+	}
 }
 
 func (probe NativeHTTPProbe) Execute(ctx context.Context, request StageRequest) (Collection, error) {
