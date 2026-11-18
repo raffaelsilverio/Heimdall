@@ -23,12 +23,14 @@ const agentHTTPProbeVersion = "native-http-v1"
 
 func (NativeHTTPProbe) Spec() AgentToolSpec {
 	return AgentToolSpec{
-		ID: AgentHTTPProbeID, Stage: StageWeb, Class: AgentToolClassSafeActive,
+		ID: AgentHTTPProbeID, Version: agentHTTPProbeVersion,
+		Stage: StageWeb, Class: AgentToolClassSafeActive, Origin: AgentToolOriginCompiled,
 		Description: "Send one bounded HEAD request per authorized target without redirects, bodies, retries, or a shell.",
-		MaxTargets:  maxAgentToolTargets,
+		TargetTypes: []string{AgentToolTargetHTTPURL}, ScopeRule: AgentToolScopeProgramActiveURL,
+		MaxTargets: AgentHTTPProbeMaxTargets, MaxRequests: AgentHTTPProbeMaxTargets,
 		Arguments: []ToolArgument{{
 			Name: "targets", Type: ToolArgumentStringList, Required: true,
-			MaxItems: maxAgentToolTargets, MaxLength: 2048,
+			MaxItems: AgentHTTPProbeMaxTargets, MaxLength: AgentHTTPProbeMaxURLBytes,
 		}},
 		Accounting: AgentToolAccountingOnePerTarget,
 	}

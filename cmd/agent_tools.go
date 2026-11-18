@@ -10,17 +10,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type agentToolCatalogEntry struct {
+	recon.AgentToolSpec
+	Autonomous bool `json:"autonomous"`
+}
+
 func newAgentToolsCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "tools",
-		Short: "List the compiled agent tool catalog and argument schemas",
+		Short: "List the compiled agent tool catalog, risk class, scope and accounting",
 		Long:  "Lists only agent adapters compiled into this binary. It reads no database, calls no provider, and sends no network or shell request.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			specs := recon.NewDefaultAgentActionRegistry().Specs()
+			entries := agentToolCatalog()
 			if asJSON {
-				encoded, err := json.MarshalIndent(specs, "", "  ")
+				encoded, err := json.MarshalIndent(entries, "", "  ")
 				if err != nil {
 					return fmt.Errorf("encode agent tool catalog: %w", err)
 				}
@@ -28,12 +33,15 @@ func newAgentToolsCommand() *cobra.Command {
 				return err
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "TOOL\tSTAGE\tCLASS\tMAX TARGETS\tACCOUNTING\tARGUMENTS"); err != nil {
+			if _, err := fmt.Fprintln(writer, "TOOL\tVERSION\tSTAGE\tCLASS\tTARGET TYPES\tSCOPE\tMAX TARGETS\tMAX REQUESTS\tACCOUNTING\tAUTONOMOUS\tARGUMENTS"); err != nil {
 				return err
 			}
-			for _, spec := range specs {
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n",
-					spec.ID, spec.Stage, spec.Class, spec.MaxTargets, spec.Accounting, formatAgentToolArguments(spec)); err != nil {
+			for _, entry := range entries {
+				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+					entry.ID, entry.Version, entry.Stage, entry.Class,
+					strings.Join(entry.TargetTypes, ","), entry.ScopeRule,
+					entry.MaxTargets, entry.MaxRequests, entry.Accounting,
+					formatAgentToolAutonomy(entry.Autonomous), formatAgentToolArguments(entry.AgentToolSpec)); err != nil {
 					return err
 				}
 			}
@@ -42,6 +50,22 @@ func newAgentToolsCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "Print the full metadata and argument schemas as JSON")
 	return command
+}
+
+func agentToolCatalog() []agentToolCatalogEntry {
+	specs := recon.NewDefaultAgentActionRegistry().Specs()
+	entries := make([]agentToolCatalogEntry, 0, len(specs))
+	for _, spec := range specs {
+		entries = append(entries, agentToolCatalogEntry{AgentToolSpec: spec, Autonomous: spec.AutonomousEligible()})
+	}
+	return entries
+}
+
+func formatAgentToolAutonomy(autonomous bool) string {
+	if autonomous {
+		return "yes"
+	}
+	return "no"
 }
 
 func formatAgentToolArguments(spec recon.AgentToolSpec) string {

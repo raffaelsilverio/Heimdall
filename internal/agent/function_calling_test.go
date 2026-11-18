@@ -20,8 +20,8 @@ func TestPlanToolDefinitionsUsesReviewedSchema(t *testing.T) {
 		t.Fatalf("unexpected tool definitions: %+v", definitions)
 	}
 	property, declared := definitions[0].Parameters.Properties["targets"]
-	if !declared || property.Type != "array" || property.MaxItems != 1000 ||
-		property.Items == nil || property.Items.Type != "string" || property.Items.MaxLength != 2048 {
+	if !declared || property.Type != "array" || property.MaxItems != recon.AgentHTTPProbeMaxTargets ||
+		property.Items == nil || property.Items.Type != "string" || property.Items.MaxLength != recon.AgentHTTPProbeMaxURLBytes {
 		t.Fatalf("reviewed schema was not translated: %+v", definitions[0].Parameters)
 	}
 	if len(definitions[0].Parameters.Required) != 1 || definitions[0].Parameters.Required[0] != "targets" {

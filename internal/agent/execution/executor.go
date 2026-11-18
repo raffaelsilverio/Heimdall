@@ -23,11 +23,6 @@ type Executor struct {
 	Clock    clock.Clock
 }
 
-const (
-	maxNativeHTTPActionTargets  = 8
-	maxNativeHTTPActionURLBytes = 2048
-)
-
 type Result struct {
 	ProgramID       string               `json:"program_id"`
 	ActionRunID     string               `json:"action_run_id"`
@@ -142,12 +137,12 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 		if grant.RequestBudget < len(grant.Targets) {
 			return Result{}, errors.New("request budget must cover one native HEAD request per authorized target")
 		}
-		if len(grant.Targets) > maxNativeHTTPActionTargets {
-			return Result{}, fmt.Errorf("native HTTP executor is limited to %d targets per action", maxNativeHTTPActionTargets)
+		if len(grant.Targets) > recon.AgentHTTPProbeMaxTargets {
+			return Result{}, fmt.Errorf("native HTTP executor is limited to %d targets per action", recon.AgentHTTPProbeMaxTargets)
 		}
 		for _, target := range grant.Targets {
-			if len(target) > maxNativeHTTPActionURLBytes {
-				return Result{}, fmt.Errorf("native HTTP target exceeds %d bytes", maxNativeHTTPActionURLBytes)
+			if len(target) > recon.AgentHTTPProbeMaxURLBytes {
+				return Result{}, fmt.Errorf("native HTTP target exceeds %d bytes", recon.AgentHTTPProbeMaxURLBytes)
 			}
 		}
 	}

@@ -174,8 +174,8 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 			}
 		}
 		generationContext := currentContext
-		if generationContext.Policy.MaxTargetsPerAction > maxNativeHTTPActionTargets {
-			generationContext.Policy.MaxTargetsPerAction = maxNativeHTTPActionTargets
+		if generationContext.Policy.MaxTargetsPerAction > recon.AgentHTTPProbeMaxTargets {
+			generationContext.Policy.MaxTargetsPerAction = recon.AgentHTTPProbeMaxTargets
 		}
 		proposals, err := agent.GenerateActionProposals(ctx, model, modelName, generationContext, memory, now)
 		if err != nil {
@@ -203,11 +203,11 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, fmt.Errorf("adaptive action rejected by policy: %w", err))
 		}
-		if grant.RequestBudget < len(grant.Targets) || len(grant.Targets) > maxNativeHTTPActionTargets {
+		if grant.RequestBudget < len(grant.Targets) || len(grant.Targets) > recon.AgentHTTPProbeMaxTargets {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive native HTTP grant exceeds its one-request-per-target limit"))
 		}
 		for _, target := range grant.Targets {
-			if len(target) > maxNativeHTTPActionURLBytes {
+			if len(target) > recon.AgentHTTPProbeMaxURLBytes {
 				return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive native HTTP target exceeds the executor URL limit"))
 			}
 		}

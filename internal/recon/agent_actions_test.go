@@ -29,11 +29,18 @@ func TestDefaultAgentRegistryExposesReviewedNativeProbe(t *testing.T) {
 		t.Fatalf("default agent registry contains %d tools, want 1: %+v", len(specs), specs)
 	}
 	spec := specs[0]
-	if spec.ID != AgentHTTPProbeID || spec.Stage != StageWeb || spec.Class != AgentToolClassSafeActive {
-		t.Fatalf("native probe metadata is incomplete: %+v", spec)
+	if spec.ID != AgentHTTPProbeID || spec.Version != agentHTTPProbeVersion ||
+		spec.Stage != StageWeb || spec.Class != AgentToolClassSafeActive ||
+		spec.Origin != AgentToolOriginCompiled || !spec.AutonomousEligible() {
+		t.Fatalf("native probe identity or autonomy metadata is incomplete: %+v", spec)
 	}
-	if spec.Accounting != AgentToolAccountingOnePerTarget || spec.MaxTargets != maxAgentToolTargets {
+	if spec.Accounting != AgentToolAccountingOnePerTarget ||
+		spec.MaxTargets != AgentHTTPProbeMaxTargets || spec.MaxRequests != AgentHTTPProbeMaxTargets {
 		t.Fatalf("native probe accounting metadata is incomplete: %+v", spec)
+	}
+	if len(spec.TargetTypes) != 1 || spec.TargetTypes[0] != AgentToolTargetHTTPURL ||
+		spec.ScopeRule != AgentToolScopeProgramActiveURL {
+		t.Fatalf("native probe target/scope metadata is incomplete: %+v", spec)
 	}
 	if len(spec.Arguments) != 1 || spec.Arguments[0].Name != "targets" ||
 		spec.Arguments[0].Type != ToolArgumentStringList || !spec.Arguments[0].Required {
@@ -45,6 +52,22 @@ func TestDefaultAgentRegistryExposesReviewedNativeProbe(t *testing.T) {
 	}
 	if _, err := registry.Lookup("unregistered_probe"); err == nil || !strings.Contains(err.Error(), "not in the compiled registry") {
 		t.Fatalf("Lookup error = %v, want an unregistered-tool rejection", err)
+	}
+}
+
+func TestAgentToolSpecAutonomousEligibility(t *testing.T) {
+	spec := validAgentToolSpec()
+	if !spec.AutonomousEligible() {
+		t.Fatalf("reviewed native probe is not autonomy-eligible: %+v", spec)
+	}
+	spec.Origin = "mcp"
+	if spec.AutonomousEligible() {
+		t.Fatal("an MCP-origin spec must not be autonomy-eligible")
+	}
+	spec = validAgentToolSpec()
+	spec.MaxRequests = spec.MaxTargets - 1
+	if spec.AutonomousEligible() {
+		t.Fatal("a spec whose max requests cannot cover every target must not be autonomy-eligible")
 	}
 }
 
@@ -77,11 +100,22 @@ func TestAgentRegistryRejectsInvalidMetadata(t *testing.T) {
 		{name: "nil adapter", want: "nil adapter"},
 		{name: "empty id", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.ID = "" })}, want: "non-empty"},
 		{name: "whitespace id", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.ID = " probe " })}, want: "non-empty"},
+		{name: "empty version", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Version = "" })}, want: "version"},
+		{name: "invalid version", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Version = "Native HTTP" })}, want: "version"},
 		{name: "unsupported stage", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Stage = StageOSINT })}, want: "unsupported stage"},
 		{name: "unsupported class", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Class = "sensitive" })}, want: "unsupported action class"},
+		{name: "unsupported origin", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Origin = "mcp" })}, want: "unsupported origin"},
 		{name: "missing description", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Description = " " })}, want: "description"},
+		{name: "no target types", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.TargetTypes = nil })}, want: "target types"},
+		{name: "unsupported target type", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.TargetTypes = []string{"dns_hostname"} })}, want: "unsupported target type"},
+		{name: "duplicate target type", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) {
+			spec.TargetTypes = []string{AgentToolTargetHTTPURL, AgentToolTargetHTTPURL}
+		})}, want: "more than once"},
+		{name: "unsupported scope rule", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.ScopeRule = "program_scope" })}, want: "unsupported scope rule"},
 		{name: "zero max targets", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.MaxTargets = 0 })}, want: "max targets"},
 		{name: "excessive max targets", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.MaxTargets = maxAgentToolTargets + 1 })}, want: "max targets"},
+		{name: "max requests below targets", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.MaxRequests = spec.MaxTargets - 1 })}, want: "max requests"},
+		{name: "excessive max requests", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.MaxRequests = maxAgentToolTargets + 1 })}, want: "max requests"},
 		{name: "unsupported accounting", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Accounting = "unlimited" })}, want: "unsupported accounting"},
 		{name: "no arguments", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Arguments = nil })}, want: "arguments"},
 		{name: "missing targets argument", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) {
@@ -121,6 +155,7 @@ func TestAgentRegistryRejectsDuplicateIDs(t *testing.T) {
 func TestAgentRegistryValidatesRequestBeforeAdapterRuns(t *testing.T) {
 	spec := validAgentToolSpec()
 	spec.MaxTargets = 2
+	spec.MaxRequests = 2
 	spec.Arguments[0].MaxItems = 2
 	spec.Arguments[0].MaxLength = 16
 	adapter := &countingAgentAdapter{spec: spec}
