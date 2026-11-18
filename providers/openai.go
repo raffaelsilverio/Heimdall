@@ -66,17 +66,30 @@ func (provider *OpenAI) label() string {
 }
 
 type openAIRequest struct {
-	Model string    `json:"model"`
-	Input []Message `json:"input"`
+	Model string       `json:"model"`
+	Input []Message    `json:"input"`
+	Tools []openAITool `json:"tools,omitempty"`
+}
+
+type openAITool struct {
+	Type string `json:"type"`
+	ToolDefinition
 }
 
 type openAIResponse struct {
-	Output []struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"output"`
+	Output []openAIOutputItem `json:"output"`
+}
+
+type openAIOutputItem struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Content   []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
 }
 
 type openAIError struct {
@@ -101,9 +114,19 @@ func (provider *OpenAI) Generate(
 		return Response{}, fmt.Errorf("%s: %w", provider.label(), ErrMissingMessages)
 	}
 
+	if err := validateToolDefinitions(request.Tools); err != nil {
+		return Response{}, fmt.Errorf("%s: %w: %w", provider.label(), ErrInvalidToolDefinition, err)
+	}
+
+	tools := make([]openAITool, 0, len(request.Tools))
+	for _, tool := range request.Tools {
+		tools = append(tools, openAITool{Type: "function", ToolDefinition: tool})
+	}
+
 	payload := openAIRequest{
 		Model: request.Model,
 		Input: request.Messages,
+		Tools: tools,
 	}
 
 	body, err := json.Marshal(payload)
@@ -137,7 +160,14 @@ func (provider *OpenAI) Generate(
 		return Response{}, fmt.Errorf("%s: read response: %w", provider.label(), err)
 	}
 
-	return provider.decodeResponse(httpResponse.StatusCode, responseBody)
+	response, err = provider.decodeResponse(httpResponse.StatusCode, responseBody)
+	if err != nil {
+		return Response{}, err
+	}
+	if err := validateToolCalls(response.ToolCalls, request.Tools); err != nil {
+		return Response{}, fmt.Errorf("%s: %w: %w", provider.label(), ErrInvalidToolCall, err)
+	}
+	return response, nil
 }
 
 func (provider *OpenAI) transportError(err error) error {
@@ -170,21 +200,40 @@ func (provider *OpenAI) decodeResponse(statusCode int, responseBody []byte) (Res
 		return Response{}, fmt.Errorf("%s: %w: %w", provider.label(), ErrInvalidResponse, err)
 	}
 
-	var text strings.Builder
+	response, err := decodeOpenAIOutput(result)
+	if err != nil {
+		return Response{}, fmt.Errorf("%s: %w: %w", provider.label(), ErrInvalidResponse, err)
+	}
+	return response, nil
+}
 
+// decodeOpenAIOutput preserves assistant text and every function-call item. A
+// response with neither is invalid: an empty plan must be explicit.
+func decodeOpenAIOutput(result openAIResponse) (Response, error) {
+	var text strings.Builder
+	calls := make([]ToolCall, 0)
 	for _, item := range result.Output {
+		if item.Type == "function_call" {
+			calls = append(calls, ToolCall{ID: toolCallID(item), Name: item.Name, Arguments: item.Arguments})
+			continue
+		}
 		for _, content := range item.Content {
 			if content.Type == "output_text" {
 				text.WriteString(content.Text)
 			}
 		}
 	}
-
-	if strings.TrimSpace(text.String()) == "" {
-		return Response{}, fmt.Errorf("%s: %w: no text output", provider.label(), ErrInvalidResponse)
+	if strings.TrimSpace(text.String()) == "" && len(calls) == 0 {
+		return Response{}, errors.New("no text or tool call output")
 	}
+	return Response{Content: text.String(), ToolCalls: calls}, nil
+}
 
-	return Response{Content: text.String()}, nil
+func toolCallID(item openAIOutputItem) string {
+	if item.CallID != "" {
+		return item.CallID
+	}
+	return item.ID
 }
 
 func closeProviderResponseBody(body io.Closer, resultErr *error) {

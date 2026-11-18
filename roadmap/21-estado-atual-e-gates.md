@@ -39,6 +39,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - Inspeção e revisão de action runs e cycle jobs (`agent action-runs`, `agent action-run`, `agent action-review`, `agent cycle-jobs`, `agent cycle-review`).
 - O planner aceita uma lista plana de ações ou um grafo de até 10 tarefas com `depends_on`, valida ids/dependências/ciclos e achata as ações em ordem topológica determinística; a validação de policy regista as tarefas revistas. `agent plan` e `agent execute` aceitam `actions` ou `tasks` (nunca ambos).
 - O catálogo agentic é compilado e tipado: `AgentToolSpec` declara estágio, classe (`safe_active`), descrição, limite de targets, schema de argumentos e accounting `one_request_per_target`. O Registry valida metadados, rejeita adapters nulos/ids duplicados, expõe `Specs`/`Lookup` e valida o pedido (stage, targets, budget, comprimentos) antes de executar. `agent tools [--json]` inspeciona o catálogo sem DB, provider, rede ou shell.
+- Function Calling nativo é opt-in (`agent propose --tools`): o planner converte apenas specs do Registry compatíveis com a policy em `ToolDefinition`, envia `tools` ao provider, rejeita chamadas não declaradas, ids repetidos e argumentos fora do schema, e converte cada chamada num `ActionProposal` com `scope_hash` e accounting one-request-per-target. `PlanValidation.tool_calls` registra a origem; o planner adaptativo e `agent cycle` continuam em modo texto.
 
 ## Limites atuais
 
@@ -47,7 +48,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - O catálogo agentic é estático: não há carregamento dinâmico, plugins ou execução Go/Python/Shell. Um novo adapter exige compilação, schema revisto e registo explícito.
 - Os providers não fazem retry automático; 429, 5xx e timeouts são devolvidos ao chamador como erros tipados para decisão explícita.
 - A compressão de contexto é determinística (descarte dos turnos mais antigos); não há sumarização por modelo.
-- Function Calling / tool calling nativo não está implementado: o contrato do planner é JSON próprio (`actions` ou `tasks`) e não envia `tools` ao provider. Foi reclassificado para a Fase 3, dependente do Tool Registry.
+- Tool calls nativos produzem apenas uma lista plana de ações; grafos de tarefas com `depends_on` continuam disponíveis apenas no contrato JSON textual. Nenhuma chamada de ferramenta é executada por `agent propose`.
 - Não há modo de edição de repositório, sandbox de código, workflow de findings reproduzidos/validados nem submissão de reports.
 - `finding_candidate` é uma deteção de scanner, não prova de vulnerabilidade. A memória nunca autoriza ações.
 

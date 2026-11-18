@@ -17,6 +17,12 @@ var (
 	ErrRequestRejected = errors.New("request rejected")
 	ErrInvalidResponse = errors.New("provider returned an invalid response")
 	ErrTimeout         = errors.New("provider request timed out")
+	// ErrInvalidToolDefinition marks a caller-supplied tool catalogue that is
+	// not a bounded, reviewed definition. Nothing is sent when it is rejected.
+	ErrInvalidToolDefinition = errors.New("invalid tool definition")
+	// ErrInvalidToolCall marks a model response that names an undeclared tool,
+	// repeats a call id, or carries malformed arguments.
+	ErrInvalidToolCall = errors.New("invalid tool call")
 )
 
 // APIError describes a non-2xx response from a provider. It unwraps to one of

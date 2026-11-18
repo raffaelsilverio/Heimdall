@@ -17,11 +17,11 @@ import (
 
 func newAgentProposeCommand() *cobra.Command {
 	var providerName, modelName string
-	var sendContext, includeMemory bool
+	var sendContext, includeMemory, nativeTools bool
 	command := &cobra.Command{
 		Use:   "propose <program-id>",
 		Short: "Ask a model for a policy-checked plan; never executes it",
-		Long:  "Sends the program's current structured scope and action policy to the configured model only when --send-context is present. Memory is never sent unless --include-memory is also present; that flag includes only bounded, current memory for this program. The returned plan is validated and displayed; no tools or scans are run.",
+		Long:  "Sends the program's current structured scope and action policy to the configured model only when --send-context is present. Memory is never sent unless --include-memory is also present; that flag includes only bounded, current memory for this program. With --tools, only compiled tools that match the current policy allowlist are advertised for native function calling, and every returned call is revalidated locally. The returned plan is validated and displayed; no tools or scans are run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !sendContext {
@@ -78,7 +78,7 @@ func newAgentProposeCommand() *cobra.Command {
 				return err
 			}
 			validation, err := (agent.PolicyAwarePlanner{Policy: agent.ScopeActionPolicy{}}).
-				Propose(cmd.Context(), model, cfg.Model, policyContext, memory, time.Now().UTC())
+				Propose(cmd.Context(), model, cfg.Model, policyContext, memory, time.Now().UTC(), planOptions(nativeTools)...)
 			if err != nil {
 				return err
 			}
@@ -86,9 +86,10 @@ func newAgentProposeCommand() *cobra.Command {
 				Provider    string               `json:"provider"`
 				Model       string               `json:"model"`
 				ContextSent bool                 `json:"context_sent_to_model"`
+				NativeTools bool                 `json:"native_tools"`
 				MemoryItems int                  `json:"memory_items_sent"`
 				Plan        agent.PlanValidation `json:"plan"`
-			}{Provider: model.Name(), Model: cfg.Model, ContextSent: true, MemoryItems: len(memory), Plan: validation}
+			}{Provider: model.Name(), Model: cfg.Model, ContextSent: true, NativeTools: nativeTools, MemoryItems: len(memory), Plan: validation}
 			encoded, err := json.MarshalIndent(result, "", "  ")
 			if err != nil {
 				return fmt.Errorf("encode model proposal result: %w", err)
@@ -101,7 +102,15 @@ func newAgentProposeCommand() *cobra.Command {
 	command.Flags().StringVar(&modelName, "model", "", "AI model")
 	command.Flags().BoolVar(&sendContext, "send-context", false, "Confirm sending this program's structured scope and policy to the model provider")
 	command.Flags().BoolVar(&includeMemory, "include-memory", false, "Also send up to 8 current memory notes from this program (requires --send-context)")
+	command.Flags().BoolVar(&nativeTools, "tools", false, "Advertise the compiled tools matching the current policy for native function calling")
 	return command
+}
+
+func planOptions(nativeTools bool) []agent.PlanOption {
+	if !nativeTools {
+		return nil
+	}
+	return []agent.PlanOption{agent.WithToolRegistry(recon.NewDefaultAgentActionRegistry())}
 }
 
 const (

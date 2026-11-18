@@ -9,7 +9,7 @@ import (
 )
 
 func TestAgentProposeRequiresExplicitDataEgressConfirmation(t *testing.T) {
-	for _, extra := range [][]string{nil, {"--include-memory"}} {
+	for _, extra := range [][]string{nil, {"--include-memory"}, {"--tools"}} {
 		root := NewRootCommand()
 		args := []string{"--home", t.TempDir(), "agent", "propose", "program-id"}
 		root.SetArgs(append(args, extra...))
