@@ -40,6 +40,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - O planner aceita uma lista plana de ações ou um grafo de até 10 tarefas com `depends_on`, valida ids/dependências/ciclos e achata as ações em ordem topológica determinística; a validação de policy regista as tarefas revistas. `agent plan` e `agent execute` aceitam `actions` ou `tasks` (nunca ambos).
 - O catálogo agentic é compilado e tipado: `AgentToolSpec` declara estágio, classe (`safe_active`), descrição, limite de targets, schema de argumentos e accounting `one_request_per_target`. O Registry valida metadados, rejeita adapters nulos/ids duplicados, expõe `Specs`/`Lookup` e valida o pedido (stage, targets, budget, comprimentos) antes de executar. `agent tools [--json]` inspeciona o catálogo sem DB, provider, rede ou shell.
 - Function Calling nativo é opt-in (`agent propose --tools`): o planner converte apenas specs do Registry compatíveis com a policy em `ToolDefinition`, envia `tools` ao provider, rejeita chamadas não declaradas, ids repetidos e argumentos fora do schema, e converte cada chamada num `ActionProposal` com `scope_hash` e accounting one-request-per-target. `PlanValidation.tool_calls` registra a origem; o planner adaptativo e `agent cycle` continuam em modo texto.
+- Cada ação nativa produz `outcomes` normalizados por target e `logs` limitados (início, request, falha/término). A execução preenche `tool_version`/`observed_at`, persiste `profile_version` no `result_json` e aplica truncagem UTF-8-safe com limites de 10 000 outcomes, 2 048 logs e 512 bytes por detalhe. Não são guardados headers, bodies nem credenciais.
 
 ## Limites atuais
 
@@ -49,6 +50,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - Os providers não fazem retry automático; 429, 5xx e timeouts são devolvidos ao chamador como erros tipados para decisão explícita.
 - A compressão de contexto é determinística (descarte dos turnos mais antigos); não há sumarização por modelo.
 - Tool calls nativos produzem apenas uma lista plana de ações; grafos de tarefas com `depends_on` continuam disponíveis apenas no contrato JSON textual. Nenhuma chamada de ferramenta é executada por `agent propose`.
+- Os logs de resultado são eventos sintéticos do adapter, não stdout/stderr de subprocessos. Ainda não existe execução Go/Python/Shell com isolamento; o único adapter executável continua a ser o probe HTTP nativo.
 - Não há modo de edição de repositório, sandbox de código, workflow de findings reproduzidos/validados nem submissão de reports.
 - `finding_candidate` é uma deteção de scanner, não prova de vulnerabilidade. A memória nunca autoriza ações.
 

@@ -229,7 +229,7 @@ heimdall agent cycle <program-id> \
   --send-context --confirm-active-requests --max-steps 3
 ```
 
-`--send-context` consents to sending structured scope, policy, and bounded probe results to the model. `--include-memory` is a further opt-in for up to eight fresh notes from this program only. Provider/model, planner-call count, and the IDs of memory notes sent are recorded in the action-run ledger. The manual cycle is capped at 20 steps and by policy budgets; it stops when the model proposes no action, repeats a target, reaches budget, or an action fails. The daemon runs only future event cycles with persistent consent. Both paths can dispatch only the native HEAD probe; no native model tool-calling, shell, or subprocess adapters are enabled. Tool calling is deferred to the Phase 3 Tool Registry; the planner contract is a bounded JSON action list or task graph.
+`--send-context` consents to sending structured scope, policy, and bounded probe results to the model. `--include-memory` is a further opt-in for up to eight fresh notes from this program only. Provider/model, planner-call count, and the IDs of memory notes sent are recorded in the action-run ledger. The manual cycle is capped at 20 steps and by policy budgets; it stops when the model proposes no action, repeats a target, reaches budget, or an action fails. The daemon runs only future event cycles with persistent consent. Both paths can dispatch only the native HEAD probe; no shell or subprocess adapters are enabled. Native model tool calling is available only in `agent propose --tools`; the synchronous and daemon cycle planners still use the bounded JSON action/task contract.
 
 `SIGINT` and `SIGTERM` cancel the running command. In-flight action runs and cycle jobs are closed as `failed` through a short persistence window that is not cancelled, so an interrupted command does not leave an active run behind.
 
@@ -259,6 +259,8 @@ heimdall agent action-review <program-id> <action-run-id> <action-id> \
   --decision assessed_not_executed --reviewed-by <operator> \
   --note 'Reviewed executor and target logs; no request was observed.'
 ```
+
+Each stored action result includes a normalized `profile_version`, one `outcomes` entry per authorized target (method, status code, result), and bounded `logs` covering start, each request completion, failures, and finish. These records never contain response headers, response bodies, request bodies, or credentials. The logs are adapter events, not subprocess stdout/stderr; the only executable adapter remains the native HEAD probe.
 
 Review records are append-once and require an operator plus a rationale. The action retains status `uncertain`, its request budget remains consumed, and review never retries it. When every uncertain action in a run has an assessment, the run closes as `failed`; start a new, explicitly authorized action run if further testing is warranted.
 

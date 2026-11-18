@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,7 +41,9 @@ func TestNativeHTTPProbeMakesOneMeteredHeadAndDoesNotFollowRedirects(t *testing.
 
 	program, target := nativeProbeProgram(t, server.URL)
 	meter := &nativeProbeMeter{limit: 1}
-	collection, err := (NativeHTTPProbe{Transport: server.Client().Transport}).Execute(context.Background(), StageRequest{
+	fixed := time.Date(2026, time.November, 18, 12, 0, 0, 0, time.UTC)
+	probe := NativeHTTPProbe{Transport: server.Client().Transport, Now: func() time.Time { return fixed }}
+	collection, err := probe.Execute(context.Background(), StageRequest{
 		Program: program, Stage: StageWeb, Targets: []string{target}, Limits: StageLimits{
 			RateLimitPerSecond: 1000, MaxConcurrency: 1, MaxTargets: 1, TimeoutSeconds: 5,
 		}, RequestMeter: meter, RequestBudget: 1,
@@ -54,6 +57,22 @@ func TestNativeHTTPProbeMakesOneMeteredHeadAndDoesNotFollowRedirects(t *testing.
 	if len(collection.Observations) != 1 || collection.Observations[0].Category != CategoryHTTPProbe ||
 		collection.Observations[0].Value != "HEAD status=302" || len(collection.Artifacts) != 0 {
 		t.Fatalf("probe persisted unexpected response data: %+v", collection)
+	}
+	observation := collection.Observations[0]
+	if observation.ToolVersion != agentHTTPProbeVersion || !observation.ObservedAt.Equal(fixed) {
+		t.Fatalf("observation metadata was not normalized: %+v", observation)
+	}
+	if collection.ProfileVersion != agentHTTPProbeVersion || len(collection.Outcomes) != 1 ||
+		collection.Outcomes[0].Target != target || collection.Outcomes[0].Method != http.MethodHead ||
+		collection.Outcomes[0].StatusCode != http.StatusFound || collection.Outcomes[0].Result != "http_response" {
+		t.Fatalf("probe outcome was not normalized: %+v", collection.Outcomes)
+	}
+	events := make([]string, 0, len(collection.Logs))
+	for _, entry := range collection.Logs {
+		events = append(events, entry.Event)
+	}
+	if strings.Join(events, ",") != "probe_started,request_completed,probe_completed" {
+		t.Fatalf("probe logs are incomplete or out of order: %+v", collection.Logs)
 	}
 }
 

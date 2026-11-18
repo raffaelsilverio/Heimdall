@@ -67,6 +67,8 @@ type Collection struct {
 	Observations   []Observation
 	Artifacts      []Artifact
 	Tools          []ToolResult
+	Outcomes       []AgentOutcome
+	Logs           []LogEntry
 	ProfileVersion string
 }
 

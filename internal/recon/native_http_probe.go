@@ -16,7 +16,10 @@ import (
 // does not follow redirects, retry, persist response bodies, or invoke a shell.
 type NativeHTTPProbe struct {
 	Transport http.RoundTripper
+	Now       func() time.Time
 }
+
+const agentHTTPProbeVersion = "native-http-v1"
 
 func (NativeHTTPProbe) Spec() AgentToolSpec {
 	return AgentToolSpec{
@@ -32,9 +35,15 @@ func (NativeHTTPProbe) Spec() AgentToolSpec {
 }
 
 func (probe NativeHTTPProbe) Execute(ctx context.Context, request StageRequest) (Collection, error) {
-	collection := Collection{Tools: []ToolResult{{ID: AgentHTTPProbeID, Binary: "builtin", Version: "native-http-v1", Status: "running"}}}
+	collection := Collection{Tools: []ToolResult{{
+		ID: AgentHTTPProbeID, Binary: "builtin", Version: agentHTTPProbeVersion, Status: "running",
+	}}}
+	probe.appendLog(&collection, "info", "probe_started", "", "native HTTP HEAD probe started")
 	targets, err := validateNativeHTTPProbeRequest(request)
 	if err != nil {
+		probe.appendLog(&collection, "error", "probe_rejected", "", err.Error())
+		collection.Tools[0].Status = "failed"
+		collection.Tools[0].Error = err.Error()
 		return collection, err
 	}
 	stageContext, cancel := context.WithTimeout(ctx, time.Duration(request.Limits.TimeoutSeconds)*time.Second)
@@ -52,32 +61,65 @@ func (probe NativeHTTPProbe) Execute(ctx context.Context, request StageRequest) 
 		select {
 		case <-stageContext.Done():
 			timer.Stop()
-			collection.Tools[0].Status = "failed"
-			collection.Tools[0].Error = stageContext.Err().Error()
+			probe.recordFailure(&collection, target, "timeout", stageContext.Err())
 			return collection, stageContext.Err()
 		case <-timer.C:
 		}
 		req, err := http.NewRequestWithContext(stageContext, http.MethodHead, target, nil)
 		if err != nil {
-			collection.Tools[0].Status = "failed"
-			collection.Tools[0].Error = "could not build authorized HEAD request"
+			probe.recordFailure(&collection, target, "request_error", errors.New("could not build authorized HEAD request"))
 			return collection, errors.New("could not build authorized HEAD request")
 		}
 		response, err := client.Do(req)
 		if err != nil {
-			collection.Tools[0].Status = "failed"
-			collection.Tools[0].Error = err.Error()
+			probe.recordFailure(&collection, target, "request_error", err)
 			return collection, fmt.Errorf("native HTTP probe request failed: %w", err)
 		}
 		_ = response.Body.Close()
+		observedAt := probe.now()
 		collection.Observations = append(collection.Observations, Observation{
 			Category: CategoryHTTPProbe, StableKey: target,
 			Value: fmt.Sprintf("HEAD status=%d", response.StatusCode), Source: AgentHTTPProbeID,
+			ToolVersion: agentHTTPProbeVersion, ObservedAt: observedAt,
+		})
+		collection.Outcomes = append(collection.Outcomes, AgentOutcome{
+			Target: target, Method: http.MethodHead, StatusCode: response.StatusCode, Result: "http_response",
+		})
+		collection.Logs = append(collection.Logs, LogEntry{
+			At: observedAt, Level: "info", Event: "request_completed", Target: target,
+			Detail: fmt.Sprintf("HEAD status=%d", response.StatusCode),
 		})
 	}
-	collection.ProfileVersion = "native-http-v1"
+	collection.ProfileVersion = agentHTTPProbeVersion
 	collection.Tools[0].Status = "complete"
+	probe.appendLog(&collection, "info", "probe_completed", "", fmt.Sprintf("HEAD requests completed=%d", len(collection.Outcomes)))
 	return collection, nil
+}
+
+func (probe NativeHTTPProbe) recordFailure(collection *Collection, target, result string, failure error) {
+	event := "request_failed"
+	if result == "timeout" {
+		event = "request_timeout"
+	}
+	collection.Tools[0].Status = "failed"
+	collection.Tools[0].Error = failure.Error()
+	collection.Outcomes = append(collection.Outcomes, AgentOutcome{
+		Target: target, Method: http.MethodHead, Result: result,
+	})
+	probe.appendLog(collection, "error", event, target, failure.Error())
+}
+
+func (probe NativeHTTPProbe) appendLog(collection *Collection, level, event, target, detail string) {
+	collection.Logs = append(collection.Logs, LogEntry{
+		At: probe.now(), Level: level, Event: event, Target: target, Detail: detail,
+	})
+}
+
+func (probe NativeHTTPProbe) now() time.Time {
+	if probe.Now != nil {
+		return probe.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func validateNativeHTTPProbeRequest(request StageRequest) ([]string, error) {

@@ -29,48 +29,56 @@ const (
 )
 
 type Result struct {
-	ProgramID       string              `json:"program_id"`
-	ActionRunID     string              `json:"action_run_id"`
-	ActionIDs       []string            `json:"action_ids"`
-	ScopeHash       string              `json:"scope_hash"`
-	PolicyRevision  int64               `json:"policy_revision"`
-	RequestsUsed    int                 `json:"requests_used"`
-	ModelCalls      int                 `json:"model_calls,omitempty"`
-	MemoryItemsSent int                 `json:"memory_items_sent,omitempty"`
-	Status          string              `json:"status"`
-	StopReason      string              `json:"stop_reason,omitempty"`
-	Executed        bool                `json:"executed"`
-	Actions         []ActionResult      `json:"actions"`
-	Observations    []recon.Observation `json:"observations,omitempty"`
-	Tools           []recon.ToolResult  `json:"tools,omitempty"`
-	Error           string              `json:"error,omitempty"`
+	ProgramID       string               `json:"program_id"`
+	ActionRunID     string               `json:"action_run_id"`
+	ActionIDs       []string             `json:"action_ids"`
+	ScopeHash       string               `json:"scope_hash"`
+	PolicyRevision  int64                `json:"policy_revision"`
+	RequestsUsed    int                  `json:"requests_used"`
+	ModelCalls      int                  `json:"model_calls,omitempty"`
+	MemoryItemsSent int                  `json:"memory_items_sent,omitempty"`
+	Status          string               `json:"status"`
+	StopReason      string               `json:"stop_reason,omitempty"`
+	Executed        bool                 `json:"executed"`
+	Actions         []ActionResult       `json:"actions"`
+	Observations    []recon.Observation  `json:"observations,omitempty"`
+	Outcomes        []recon.AgentOutcome `json:"outcomes,omitempty"`
+	Logs            []recon.LogEntry     `json:"logs,omitempty"`
+	Tools           []recon.ToolResult   `json:"tools,omitempty"`
+	Error           string               `json:"error,omitempty"`
 }
 
 type ActionResult struct {
-	ActionID      string              `json:"action_id"`
-	Sequence      int                 `json:"sequence"`
-	Stage         string              `json:"stage"`
-	ActionClass   agent.ActionClass   `json:"action_class"`
-	RequestBudget int                 `json:"request_budget"`
-	RequestsUsed  int                 `json:"requests_used"`
-	Status        string              `json:"status"`
-	Observations  []recon.Observation `json:"observations,omitempty"`
-	Tools         []recon.ToolResult  `json:"tools,omitempty"`
-	Error         string              `json:"error,omitempty"`
+	ActionID       string               `json:"action_id"`
+	Sequence       int                  `json:"sequence"`
+	Stage          string               `json:"stage"`
+	ActionClass    agent.ActionClass    `json:"action_class"`
+	RequestBudget  int                  `json:"request_budget"`
+	RequestsUsed   int                  `json:"requests_used"`
+	Status         string               `json:"status"`
+	ProfileVersion string               `json:"profile_version,omitempty"`
+	Observations   []recon.Observation  `json:"observations,omitempty"`
+	Outcomes       []recon.AgentOutcome `json:"outcomes,omitempty"`
+	Logs           []recon.LogEntry     `json:"logs,omitempty"`
+	Tools          []recon.ToolResult   `json:"tools,omitempty"`
+	Error          string               `json:"error,omitempty"`
 }
 
 type storedActionResult struct {
-	ProgramID      string              `json:"program_id"`
-	ActionRunID    string              `json:"action_run_id"`
-	ActionID       string              `json:"action_id"`
-	ScopeHash      string              `json:"scope_hash"`
-	PolicyRevision int64               `json:"policy_revision"`
-	Stage          string              `json:"stage"`
-	CompletedAt    time.Time           `json:"completed_at"`
-	Observations   []recon.Observation `json:"observations,omitempty"`
-	Tools          []recon.ToolResult  `json:"tools,omitempty"`
-	Error          string              `json:"error,omitempty"`
-	Notice         string              `json:"notice"`
+	ProgramID      string               `json:"program_id"`
+	ActionRunID    string               `json:"action_run_id"`
+	ActionID       string               `json:"action_id"`
+	ScopeHash      string               `json:"scope_hash"`
+	PolicyRevision int64                `json:"policy_revision"`
+	Stage          string               `json:"stage"`
+	CompletedAt    time.Time            `json:"completed_at"`
+	ProfileVersion string               `json:"profile_version,omitempty"`
+	Observations   []recon.Observation  `json:"observations,omitempty"`
+	Outcomes       []recon.AgentOutcome `json:"outcomes,omitempty"`
+	Logs           []recon.LogEntry     `json:"logs,omitempty"`
+	Tools          []recon.ToolResult   `json:"tools,omitempty"`
+	Error          string               `json:"error,omitempty"`
+	Notice         string               `json:"notice"`
 }
 
 // ExecuteOne performs one explicitly supplied proposal through the single

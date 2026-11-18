@@ -76,7 +76,11 @@ func TestExecutorRunsOnlyMeteredNativeProbeAndRejectsReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if requests.Load() != 1 || result.Status != "completed" || result.RequestsUsed != 1 || !result.Executed ||
-		len(result.Observations) != 1 || result.Observations[0].Value != "HEAD status=204" {
+		len(result.Observations) != 1 || result.Observations[0].Value != "HEAD status=204" ||
+		len(result.Outcomes) != 1 || result.Outcomes[0].StatusCode != http.StatusNoContent ||
+		result.Outcomes[0].Result != "http_response" ||
+		result.Observations[0].ToolVersion != "native-http-v1" || result.Observations[0].ObservedAt.IsZero() ||
+		len(result.Logs) < 3 {
 		t.Fatalf("native action result is unexpected: requests=%d result=%+v", requests.Load(), result)
 	}
 
@@ -89,10 +93,15 @@ func TestExecutorRunsOnlyMeteredNativeProbeAndRejectsReplay(t *testing.T) {
 		t.Fatalf("action reservation did not persist result and request usage: actions=%+v err=%v", reservations, err)
 	}
 	var persisted struct {
-		Notice       string              `json:"notice"`
-		Observations []recon.Observation `json:"observations"`
+		Notice         string               `json:"notice"`
+		ProfileVersion string               `json:"profile_version"`
+		Observations   []recon.Observation  `json:"observations"`
+		Outcomes       []recon.AgentOutcome `json:"outcomes"`
+		Logs           []recon.LogEntry     `json:"logs"`
 	}
-	if err := json.Unmarshal([]byte(reservations[0].ResultJSON), &persisted); err != nil || len(persisted.Observations) != 1 || persisted.Notice == "" {
+	if err := json.Unmarshal([]byte(reservations[0].ResultJSON), &persisted); err != nil ||
+		len(persisted.Observations) != 1 || persisted.Notice == "" ||
+		persisted.ProfileVersion != "native-http-v1" || len(persisted.Outcomes) != 1 || len(persisted.Logs) < 3 {
 		t.Fatalf("persisted result is not auditable or structured: result=%s err=%v", reservations[0].ResultJSON, err)
 	}
 	if _, err := executor.ExecuteOne(context.Background(), program.ID, actionRunID, proposal, now.Add(3*time.Second)); err == nil {
