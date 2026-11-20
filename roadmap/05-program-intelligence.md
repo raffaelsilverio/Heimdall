@@ -147,7 +147,9 @@ program:
 
 O exemplo é ilustrativo. Os valores reais deverão ser obtidos das regras do programa e das autorizações do utilizador.
 
-O perfil de request é configurável por programa com `heimdall program request-profile set`: o `user_agent` e os `headers` são normalizados, ordenados e aplicados pelo middleware a pedidos HTTP nativos e ao estágio web. Headers de framing (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, etc.) e credenciais (`Authorization`, `Proxy-Authorization`, `Cookie`) são rejeitados; contas de teste e credenciais usam um mecanismo separado.
+O perfil de request é configurável por programa com `heimdall program request-profile set`: o `user_agent` e os `headers` são normalizados, ordenados e aplicados pelo middleware a pedidos HTTP nativos e a todos os estágios que enviam HTTP (web, crawl, ffuf e nuclei). Headers de framing (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, etc.) e credenciais (`Authorization`, `Proxy-Authorization`, `Cookie`) são rejeitados; contas de teste e credenciais usam um mecanismo separado.
+
+O registo de contas de teste (`heimdall program accounts`) guarda apenas metadados revistos (identificador, identidade na aplicação, papel, origem da autorização, estado) e uma referência `env:NAME` para a credencial. Valores de credenciais nunca são guardados, impressos ou registados. A política de acesso a dados (`heimdall program data-access`) admite exclusivamente dados de contas de teste e mantém `allow_other_users_data` sempre desativado; `DataAccessPolicy.AuthorizeTestAccount` é a decisão única que as camadas de sessão e browser devem consultar antes de aceder a um recurso autenticado.
 
 ## Default: investigação apenas com contas de teste
 

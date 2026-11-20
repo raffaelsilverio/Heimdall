@@ -68,6 +68,17 @@ O perfil de request de cada programa é uma barreira independente aplicada imedi
 - Aplicação a pedidos HTTP nativos e a todos os estágios que enviam HTTP (web, crawl, ffuf e nuclei); o handshake TLS não envia headers HTTP.
 - O perfil é lido do store antes de cada ação e a revisão é persistida no resultado da ação; valores de headers nunca são registados em logs. Uma configuração inválida falha fechada antes do primeiro pedido.
 
+## Data Access
+
+O acesso a dados é uma política independente por programa:
+
+- Modo único `test_accounts_only`; `allow_other_users_data` é sempre falso e não pode ser ativado por CLI.
+- O registo de contas guarda identidade, papel, origem (`owned` ou `explicitly_authorized`) e estado (`authorized`/`revoked`).
+- Apenas referências `env:NAME` são persistidas; o valor da credencial nunca entra na base de dados, na CLI ou nos logs. A resolução do segredo acontece na futura camada de sessão.
+- Revogar uma conta mantém o registo para auditoria e impede a sua utilização.
+- `DataAccessPolicy.AuthorizeTestAccount` valida a política, o estado e a origem; uma conta revogada ou uma fonte desativada falham fechado.
+- A ausência de uma conta registada nunca é interpretada como autorização implícita.
+
 ## Controlo de impacto
 
 As ferramentas deverão ser classificadas por nível de impacto.

@@ -214,6 +214,21 @@ heimdall program request-profile reset <program-id>
 
 The profile always has a non-empty User-Agent and at most 16 headers. Names are canonicalized and sorted; duplicates, empty values, CR/LF, non-printable bytes, oversized values and framing/credential headers (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Authorization`, `Cookie`, `User-Agent`, etc.) are rejected before any request. Each change increments an auditable revision; the executor stores that revision with the action result, and header values are never written to logs or observations. Test-account credentials are intentionally outside this mechanism.
 
+User-data access is restricted to registered test accounts. Register metadata and an environment reference, never the secret itself:
+
+```sh
+heimdall program data-access show <program-id>
+heimdall program data-access set <program-id> \
+  --allow-owned=false --allow-explicitly-authorized=true
+heimdall program accounts add <program-id> \
+  --id test-user-1 --identity test-user-1@example.test --role user \
+  --credential-env HEIMDALL_ACCOUNT_TEST_USER_1
+heimdall program accounts list <program-id>
+heimdall program accounts revoke <program-id> test-user-1
+```
+
+The only data-access mode is `test_accounts_only`, and data belonging to other users is always denied. Accounts store identity, role, authorization source, status and an optional `env:NAME` reference; raw credentials are rejected and never persisted, printed or logged. Revoking an account keeps the audit record and makes it unusable. `DataAccessPolicy.AuthorizeTestAccount` is the single fail-closed decision that future session and browser layers must call before touching an authenticated resource.
+
 `heimdall agent plan <program-id>` reads a JSON proposal from stdin — either a flat `actions` list or a `tasks` graph with `depends_on` — and checks it against the program policy, active schedule, current authorization, source-review state and scope/port rules. Task ids must be unique, dependencies must exist and must not form a cycle; actions are flattened into deterministic dependency order and the validated task summaries are reported next to the policy decisions. It is a dry-run: no LLM calls, scans or tools are run, and the result reports `execution_available: false`.
 
 `heimdall agent tools [--json]` lists the compiled agent catalog and its reviewed argument schemas without opening the database or sending any request. Each entry declares its version, stage, risk class, origin, isolation profile, target types, scope rule, target/request caps and accounting; only compiled `safe_active` adapters with `native_in_process_metered`, `one_request_per_target` and `program_active_url` are marked autonomous. The catalog is static: only adapters compiled into the binary can run, and the registry rejects unknown ids, invalid metadata, wrong stages, empty or oversized targets, and request budgets that do not cover every target before dispatch.
