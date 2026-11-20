@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/raffaelsilverio/Heimdall/internal/assessment"
 	"github.com/raffaelsilverio/Heimdall/internal/clock"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/raffaelsilverio/Heimdall/internal/store"
@@ -17,6 +18,7 @@ type Repository interface {
 	ValidateRunAuthorization(ctx context.Context, runID string, now time.Time) error
 	InScopeHostSeeds(ctx context.Context, programID, scopeHash string) ([]string, error)
 	InScopeEndpointSeeds(ctx context.Context, programID, scopeHash string) ([]string, error)
+	GetProgramRequestProfile(ctx context.Context, programID string) (assessment.RequestProfile, error)
 	CompleteRun(ctx context.Context, runID string, collection recon.Collection, complete bool, runErr error, now time.Time) ([]store.ChangeEvent, error)
 }
 
@@ -154,6 +156,11 @@ func (d Daemon) runStageWithPolicy(ctx context.Context, job store.DueJob, reques
 	if err := d.Store.ValidateRunAuthorization(stageContext, job.RunID, d.now()); err != nil {
 		return recon.Collection{}, err
 	}
+	profile, err := d.Store.GetProgramRequestProfile(stageContext, job.Program.ID)
+	if err != nil {
+		return recon.Collection{}, fmt.Errorf("load program request profile: %w", err)
+	}
+	request.RequestProfile = profile
 	stopMonitor := make(chan struct{})
 	monitorDone := make(chan struct{})
 	go func() {

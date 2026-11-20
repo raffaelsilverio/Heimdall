@@ -89,12 +89,13 @@ type StageLimits struct {
 }
 
 type StageRequest struct {
-	Program       assessment.Program
-	Stage         string
-	Targets       []string
-	Limits        StageLimits
-	RequestMeter  RequestMeter
-	RequestBudget int
+	Program        assessment.Program
+	Stage          string
+	Targets        []string
+	Limits         StageLimits
+	RequestMeter   RequestMeter
+	RequestBudget  int
+	RequestProfile assessment.RequestProfile
 }
 
 func DefaultStageLimits(stage string) StageLimits {
@@ -114,6 +115,29 @@ func DefaultStageLimits(stage string) StageLimits {
 	default:
 		return StageLimits{}
 	}
+}
+
+// resolveStageLimits fills unset fields with the stage defaults and rejects an
+// invalid configuration before a collector resolves a binary or opens a
+// connection. Collectors share it to keep their dispatch paths small.
+func resolveStageLimits(stage string, limits StageLimits) (StageLimits, error) {
+	defaults := DefaultStageLimits(stage)
+	if limits.RateLimitPerSecond == 0 {
+		limits.RateLimitPerSecond = defaults.RateLimitPerSecond
+	}
+	if limits.MaxConcurrency == 0 {
+		limits.MaxConcurrency = defaults.MaxConcurrency
+	}
+	if limits.MaxTargets == 0 {
+		limits.MaxTargets = defaults.MaxTargets
+	}
+	if limits.TimeoutSeconds == 0 {
+		limits.TimeoutSeconds = defaults.TimeoutSeconds
+	}
+	if err := limits.Validate(); err != nil {
+		return StageLimits{}, err
+	}
+	return limits, nil
 }
 
 func (l StageLimits) Validate() error {

@@ -183,3 +183,59 @@ func TestPausingProgramCancelsAnInProgressWebStage(t *testing.T) {
 		t.Fatalf("paused run status = %q, want interrupted", status)
 	}
 }
+
+type capturingStageRunner struct {
+	request recon.StageRequest
+}
+
+func (r *capturingStageRunner) Run(_ context.Context, request recon.StageRequest) (recon.Collection, error) {
+	r.request = request
+	return recon.Collection{}, nil
+}
+
+func TestDaemonPassesTheProgramRequestProfileToTheStage(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "heimdall.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	start := time.Now().UTC().Truncate(time.Minute)
+	program, err := database.CreateProgram(ctx, store.CreateProgramParams{
+		Name:                   "Request profile scheduler test",
+		AuthorizationReference: "internal:request-profile-scheduler",
+		ExpiresAt:              start.Add(48 * time.Hour),
+		Scope: assessment.Scope{Entries: []assessment.ScopeEntry{{
+			Type: assessment.ScopeWildcardDomain, Value: "example.com",
+		}}},
+		Timezone: "UTC",
+	}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetStageSchedule(ctx, program.ID, recon.StageOSINT, "* * * * *", "UTC", true, start.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ActivateProgram(ctx, program.ID, start); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SetProgramRequestProfile(ctx, program.ID, assessment.RequestProfile{
+		UserAgent: "Heimdall-Daemon/2.0",
+		Headers:   []assessment.RequestHeader{{Name: "X-Program", Value: "example"}},
+	}, start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capturingStageRunner{}
+	daemon := Daemon{Store: database, Runner: runner, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if count, err := daemon.RunCycle(ctx, start); err != nil || count != 1 {
+		t.Fatalf("RunCycle: count=%d err=%v", count, err)
+	}
+	if runner.request.RequestProfile.Revision != 2 || runner.request.RequestProfile.UserAgent != "Heimdall-Daemon/2.0" ||
+		len(runner.request.RequestProfile.Headers) != 1 || runner.request.RequestProfile.Headers[0].Name != "X-Program" {
+		t.Fatalf("daemon did not pass the request profile: %+v", runner.request.RequestProfile)
+	}
+}

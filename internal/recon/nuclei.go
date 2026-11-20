@@ -34,21 +34,12 @@ func (NucleiCollector) ToolSpecs() []ToolSpec {
 
 func (c NucleiCollector) Collect(ctx context.Context, request StageRequest) (Collection, error) {
 	collection := Collection{}
-	limits := request.Limits
-	defaults := DefaultStageLimits(StageNuclei)
-	if limits.RateLimitPerSecond == 0 {
-		limits.RateLimitPerSecond = defaults.RateLimitPerSecond
+	limits, err := resolveStageLimits(StageNuclei, request.Limits)
+	if err != nil {
+		return collection, err
 	}
-	if limits.MaxConcurrency == 0 {
-		limits.MaxConcurrency = defaults.MaxConcurrency
-	}
-	if limits.MaxTargets == 0 {
-		limits.MaxTargets = defaults.MaxTargets
-	}
-	if limits.TimeoutSeconds == 0 {
-		limits.TimeoutSeconds = defaults.TimeoutSeconds
-	}
-	if err := limits.Validate(); err != nil {
+	profile, profileArgs, err := requestProfileForStage("nuclei", request.RequestProfile)
+	if err != nil {
 		return collection, err
 	}
 	targets := activeWebTargets(request.Program.Scope, request.Targets)
@@ -107,12 +98,15 @@ func (c NucleiCollector) Collect(ctx context.Context, request StageRequest) (Col
 	requestTimeout := minInt(limits.TimeoutSeconds, 10)
 	stageContext, cancel := context.WithTimeout(ctx, time.Duration(limits.TimeoutSeconds)*time.Second)
 	defer cancel()
-	output, stderr, err := runner.RunWithInput(stageContext, resolved, []byte(strings.Join(targets, "\n")+"\n"),
+	args := []string{
 		"-config", configPath, "-templates", templatePath, "-jsonl", "-silent", "-omit-raw", "-disable-update-check",
 		"-disable-unsigned-templates", "-no-interactsh", "-disable-redirects", "-severity", "info,low,medium",
 		"-exclude-tags", "dos,intrusive,fuzz,bruteforce,headless", "-type", "http", "-rate-limit", strconv.Itoa(limits.RateLimitPerSecond),
 		"-concurrency", strconv.Itoa(limits.MaxConcurrency), "-bulk-size", strconv.Itoa(limits.MaxConcurrency),
-		"-timeout", strconv.Itoa(requestTimeout), "-retries", "0", "-max-host-error", "3")
+		"-timeout", strconv.Itoa(requestTimeout), "-retries", "0", "-max-host-error", "3",
+	}
+	args = append(args, profileArgs...)
+	output, stderr, err := runner.RunWithInput(stageContext, resolved, []byte(strings.Join(targets, "\n")+"\n"), args...)
 	if err != nil {
 		collection.Tools[0].Status = "failed"
 		collection.Tools[0].Error = err.Error()
@@ -128,7 +122,7 @@ func (c NucleiCollector) Collect(ctx context.Context, request StageRequest) (Col
 	if len(artifact) > 0 {
 		collection.Artifacts = []Artifact{{Name: "nuclei.jsonl", MediaType: "application/x-ndjson", Data: artifact}}
 	}
-	collection.ProfileVersion = nucleiProfileVersion(version, templateHash, templateCount, limits)
+	collection.ProfileVersion = nucleiProfileVersion(version, templateHash, templateCount, limits, profile)
 	return collection, nil
 }
 
@@ -267,9 +261,10 @@ func parseNucleiOutput(output []byte, scope assessment.Scope, version string) ([
 	return observations, artifact.Bytes(), nil
 }
 
-func nucleiProfileVersion(toolVersion, templatesHash string, templateCount int, limits StageLimits) string {
-	material := fmt.Sprintf("%s\n%s\n%s\n%d\n%d\n%d\n%d\n%d", ProfileNucleiVersion, toolVersion,
-		templatesHash, templateCount, limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds)
+func nucleiProfileVersion(toolVersion, templatesHash string, templateCount int, limits StageLimits, profile assessment.RequestProfile) string {
+	material := fmt.Sprintf("%s\n%s\n%s\n%d\n%d\n%d\n%d\n%d\n%s", ProfileNucleiVersion, toolVersion,
+		templatesHash, templateCount, limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds,
+		requestProfileFingerprint(profile))
 	sum := sha256.Sum256([]byte(material))
 	return ProfileNucleiVersion + "-" + hex.EncodeToString(sum[:8])
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/raffaelsilverio/Heimdall/internal/agent"
+	"github.com/raffaelsilverio/Heimdall/internal/agent/execution"
 	"github.com/raffaelsilverio/Heimdall/internal/recon"
 	"github.com/spf13/cobra"
 )
@@ -39,7 +40,7 @@ func newAgentPlanCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "plan <program-id>",
 		Short: "Validate a proposed action plan against one program's policy",
-		Long:  "Reads a JSON proposal from stdin and returns a policy dry-run. It makes no LLM calls and executes no tools.",
+		Long:  "Reads a JSON proposal from stdin and returns a policy and tool-registry dry-run. It makes no LLM calls and executes no tools.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), maxAgentPlanInputBytes+1))
@@ -80,6 +81,7 @@ func newAgentPlanCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			validatePlanTools(recon.NewDefaultAgentActionRegistry(), &result)
 			encoded, err := json.MarshalIndent(result, "", "  ")
 			if err != nil {
 				return fmt.Errorf("encode plan validation: %w", err)
@@ -93,6 +95,31 @@ func newAgentPlanCommand() *cobra.Command {
 
 func nowUTC() time.Time {
 	return time.Now().UTC()
+}
+
+// validatePlanTools rejects an otherwise policy-authorized plan when any grant
+// names a tool outside the compiled registry or violates that tool's schema.
+// A partially invalid plan exposes no grants, matching the planner's policy
+// all-or-nothing behaviour and the executor's preflight checks.
+func validatePlanTools(registry recon.AgentActionRegistry, result *agent.PlanValidation) {
+	if result == nil || !result.PolicyChecksPassed {
+		return
+	}
+	for index := range result.Decisions {
+		grant := result.Decisions[index].AuthorizedCandidate
+		if grant == nil {
+			continue
+		}
+		if _, err := execution.ValidateGrant(registry, *grant); err != nil {
+			result.PolicyChecksPassed = false
+			for position := range result.Decisions {
+				result.Decisions[position].AuthorizedCandidate = nil
+			}
+			result.Decisions[index].PolicyPassed = false
+			result.Decisions[index].Reason = err.Error()
+			return
+		}
+	}
 }
 
 // loadActionPolicyContext reads the current program, policy, source-review

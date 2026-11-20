@@ -44,38 +44,40 @@ type Result struct {
 }
 
 type ActionResult struct {
-	ActionID       string               `json:"action_id"`
-	Sequence       int                  `json:"sequence"`
-	Stage          string               `json:"stage"`
-	Tool           string               `json:"tool,omitempty"`
-	ActionClass    agent.ActionClass    `json:"action_class"`
-	RequestBudget  int                  `json:"request_budget"`
-	RequestsUsed   int                  `json:"requests_used"`
-	Status         string               `json:"status"`
-	ProfileVersion string               `json:"profile_version,omitempty"`
-	Observations   []recon.Observation  `json:"observations,omitempty"`
-	Outcomes       []recon.AgentOutcome `json:"outcomes,omitempty"`
-	Logs           []recon.LogEntry     `json:"logs,omitempty"`
-	Tools          []recon.ToolResult   `json:"tools,omitempty"`
-	Error          string               `json:"error,omitempty"`
+	ActionID               string               `json:"action_id"`
+	Sequence               int                  `json:"sequence"`
+	Stage                  string               `json:"stage"`
+	Tool                   string               `json:"tool,omitempty"`
+	ActionClass            agent.ActionClass    `json:"action_class"`
+	RequestBudget          int                  `json:"request_budget"`
+	RequestsUsed           int                  `json:"requests_used"`
+	RequestProfileRevision int64                `json:"request_profile_revision,omitempty"`
+	Status                 string               `json:"status"`
+	ProfileVersion         string               `json:"profile_version,omitempty"`
+	Observations           []recon.Observation  `json:"observations,omitempty"`
+	Outcomes               []recon.AgentOutcome `json:"outcomes,omitempty"`
+	Logs                   []recon.LogEntry     `json:"logs,omitempty"`
+	Tools                  []recon.ToolResult   `json:"tools,omitempty"`
+	Error                  string               `json:"error,omitempty"`
 }
 
 type storedActionResult struct {
-	ProgramID      string               `json:"program_id"`
-	ActionRunID    string               `json:"action_run_id"`
-	ActionID       string               `json:"action_id"`
-	ScopeHash      string               `json:"scope_hash"`
-	PolicyRevision int64                `json:"policy_revision"`
-	Stage          string               `json:"stage"`
-	Tool           string               `json:"tool"`
-	CompletedAt    time.Time            `json:"completed_at"`
-	ProfileVersion string               `json:"profile_version,omitempty"`
-	Observations   []recon.Observation  `json:"observations,omitempty"`
-	Outcomes       []recon.AgentOutcome `json:"outcomes,omitempty"`
-	Logs           []recon.LogEntry     `json:"logs,omitempty"`
-	Tools          []recon.ToolResult   `json:"tools,omitempty"`
-	Error          string               `json:"error,omitempty"`
-	Notice         string               `json:"notice"`
+	ProgramID              string               `json:"program_id"`
+	ActionRunID            string               `json:"action_run_id"`
+	ActionID               string               `json:"action_id"`
+	ScopeHash              string               `json:"scope_hash"`
+	PolicyRevision         int64                `json:"policy_revision"`
+	RequestProfileRevision int64                `json:"request_profile_revision,omitempty"`
+	Stage                  string               `json:"stage"`
+	Tool                   string               `json:"tool"`
+	CompletedAt            time.Time            `json:"completed_at"`
+	ProfileVersion         string               `json:"profile_version,omitempty"`
+	Observations           []recon.Observation  `json:"observations,omitempty"`
+	Outcomes               []recon.AgentOutcome `json:"outcomes,omitempty"`
+	Logs                   []recon.LogEntry     `json:"logs,omitempty"`
+	Tools                  []recon.ToolResult   `json:"tools,omitempty"`
+	Error                  string               `json:"error,omitempty"`
+	Notice                 string               `json:"notice"`
 }
 
 // ExecuteOne performs one explicitly supplied proposal through the reviewed
@@ -265,34 +267,8 @@ func (e Executor) hasNativeHTTPProbe() bool {
 	return false
 }
 
-// validateActionGrant checks an authorized grant against the reviewed catalog
-// entry named by its proposal. The tool id has already been normalized by the
-// policy, so a grant without an explicit tool resolves to the native HTTP
-// probe. No request is made here.
 func (e Executor) validateActionGrant(grant agent.AuthorizedAction) (recon.AgentToolSpec, error) {
-	spec, err := e.Registry.Lookup(actionToolID(grant))
-	if err != nil {
-		return recon.AgentToolSpec{}, err
-	}
-	if grant.Stage != spec.Stage {
-		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q requires stage %q", spec.ID, spec.Stage)
-	}
-	if string(grant.Class) != spec.Class {
-		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q requires class %q", spec.ID, spec.Class)
-	}
-	if len(grant.Targets) > spec.MaxTargets {
-		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q accepts at most %d targets", spec.ID, spec.MaxTargets)
-	}
-	if grant.RequestBudget < len(grant.Targets) {
-		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q request budget must cover every target", spec.ID)
-	}
-	maxLength := spec.TargetMaxLength()
-	for _, target := range grant.Targets {
-		if len(target) > maxLength {
-			return recon.AgentToolSpec{}, fmt.Errorf("agent action %q target exceeds %d bytes", spec.ID, maxLength)
-		}
-	}
-	return spec, nil
+	return ValidateGrant(e.Registry, grant)
 }
 
 func (e Executor) readConsumedRequests(ctx context.Context, programID, runID, actionID string) (int, error) {

@@ -32,21 +32,12 @@ func (KatanaCollector) ToolSpecs() []ToolSpec {
 
 func (c KatanaCollector) Collect(ctx context.Context, request StageRequest) (Collection, error) {
 	collection := Collection{}
-	limits := request.Limits
-	defaults := DefaultStageLimits(StageCrawl)
-	if limits.RateLimitPerSecond == 0 {
-		limits.RateLimitPerSecond = defaults.RateLimitPerSecond
+	limits, err := resolveStageLimits(StageCrawl, request.Limits)
+	if err != nil {
+		return collection, err
 	}
-	if limits.MaxConcurrency == 0 {
-		limits.MaxConcurrency = defaults.MaxConcurrency
-	}
-	if limits.MaxTargets == 0 {
-		limits.MaxTargets = defaults.MaxTargets
-	}
-	if limits.TimeoutSeconds == 0 {
-		limits.TimeoutSeconds = defaults.TimeoutSeconds
-	}
-	if err := limits.Validate(); err != nil {
+	profile, profileArgs, err := requestProfileForStage("crawl", request.RequestProfile)
+	if err != nil {
 		return collection, err
 	}
 	targets, scopes, outOfScopes := katanaTargets(request.Program.Scope, request.Targets)
@@ -95,6 +86,7 @@ func (c KatanaCollector) Collect(ctx context.Context, request StageRequest) (Col
 		"-concurrency", strconv.Itoa(limits.MaxConcurrency), "-parallelism", "1", "-rate-limit", strconv.Itoa(limits.RateLimitPerSecond),
 		"-timeout", strconv.Itoa(minInt(limits.TimeoutSeconds, 10)), "-crawl-duration", strconv.Itoa(limits.TimeoutSeconds) + "s",
 	}
+	args = append(args, profileArgs...)
 	for _, pattern := range scopes {
 		args = append(args, "-crawl-scope", pattern)
 	}
@@ -119,7 +111,7 @@ func (c KatanaCollector) Collect(ctx context.Context, request StageRequest) (Col
 	if len(artifact) > 0 {
 		collection.Artifacts = []Artifact{{Name: "katana.jsonl", MediaType: "application/x-ndjson", Data: artifact}}
 	}
-	collection.ProfileVersion = crawlProfileVersion(version, limits)
+	collection.ProfileVersion = crawlProfileVersion(version, limits, profile)
 	return collection, nil
 }
 
@@ -326,9 +318,10 @@ func hasAllowedPort(ports []uint16, wanted uint16) bool {
 	return false
 }
 
-func crawlProfileVersion(version string, limits StageLimits) string {
-	material := fmt.Sprintf("%s\n%s\n%d\n%d\n%d\n%d", ProfileCrawlVersion, version,
-		limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds)
+func crawlProfileVersion(version string, limits StageLimits, profile assessment.RequestProfile) string {
+	material := fmt.Sprintf("%s\n%s\n%d\n%d\n%d\n%d\n%s", ProfileCrawlVersion, version,
+		limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds,
+		requestProfileFingerprint(profile))
 	sum := sha256.Sum256([]byte(material))
 	return ProfileCrawlVersion + "-" + hex.EncodeToString(sum[:8])
 }

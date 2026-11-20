@@ -82,6 +82,7 @@ func newAgentProposeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			validatePlanTools(recon.NewDefaultAgentActionRegistry(), &validation)
 			result := struct {
 				Provider    string               `json:"provider"`
 				Model       string               `json:"model"`

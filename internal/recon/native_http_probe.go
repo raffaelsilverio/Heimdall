@@ -49,6 +49,14 @@ func (probe NativeHTTPProbe) Execute(ctx context.Context, request StageRequest) 
 		collection.Tools[0].Error = err.Error()
 		return collection, err
 	}
+	profile, err := assessment.NormalizeRequestProfile(request.RequestProfile)
+	if err != nil {
+		probe.appendLog(&collection, "error", "probe_rejected", "", "invalid request profile")
+		collection.Tools[0].Status = "failed"
+		collection.Tools[0].Error = err.Error()
+		return collection, fmt.Errorf("native HTTP probe request profile: %w", err)
+	}
+	probe.appendLog(&collection, "info", "request_profile", "", RequestProfileSummary(profile))
 	stageContext, cancel := context.WithTimeout(ctx, time.Duration(request.Limits.TimeoutSeconds)*time.Second)
 	defer cancel()
 	client := &http.Client{
@@ -72,6 +80,10 @@ func (probe NativeHTTPProbe) Execute(ctx context.Context, request StageRequest) 
 		if err != nil {
 			probe.recordFailure(&collection, target, "request_error", errors.New("could not build authorized HEAD request"))
 			return collection, errors.New("could not build authorized HEAD request")
+		}
+		if err := ApplyRequestProfile(req, profile); err != nil {
+			probe.recordFailure(&collection, target, "request_error", errors.New("could not apply the program request profile"))
+			return collection, fmt.Errorf("native HTTP probe request profile: %w", err)
 		}
 		response, err := client.Do(req)
 		if err != nil {

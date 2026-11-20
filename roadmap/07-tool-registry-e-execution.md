@@ -68,7 +68,7 @@ O modelo de admissão, os perfis de isolamento (`native_in_process_metered`, `su
 
 As ferramentas que não cumpram estes requisitos podem continuar disponíveis nos fluxos normais de recon, mas não no executor agentic.
 
-`native_http_probe` e `native_tls_probe` são os exemplos atuais de adapters de baixo impacto. O primeiro faz uma requisição `HEAD` por alvo, sem seguir redirects e sem recolher corpos; o segundo faz um handshake TLS por alvo HTTPS e regista apenas metadados do certificado. O executor seleciona o adapter pelo campo `tool` da proposta e valida-o contra o Registry antes de qualquer pedido.
+`native_http_probe` e `native_tls_probe` são os exemplos atuais de adapters de baixo impacto. O primeiro faz uma requisição `HEAD` por alvo, sem seguir redirects e sem recolher corpos; o segundo faz um handshake TLS por alvo HTTPS e regista apenas metadados do certificado. O executor seleciona o adapter pelo campo `tool` da proposta e valida-o contra o Registry antes de qualquer pedido. `agent plan` e `agent propose` aplicam a mesma validação de Registry no dry-run, sem expor grants de ferramentas desconhecidas ou fora do schema. Antes do envio, o executor carrega o request profile revisto do programa e passa-o no `StageRequest`; o `native_http_probe` aplica o `User-Agent` e os headers obrigatórios, e `httpx`, `katana`, `ffuf` e `nuclei` recebem os mesmos valores como flags `-H` no respetivo argv. O perfil não se aplica ao handshake TLS, que não envia headers HTTP, e a revisão usada é persistida com o resultado da ação.
 
 ## Categorias
 

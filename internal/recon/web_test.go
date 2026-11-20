@@ -41,7 +41,7 @@ func TestWebCollectorRestrictsHTTPAndTLSInputsToAuthorizedURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const httpArgs = "-silent -json -status-code -title -tech-detect -web-server -ip -cname -ob -nfs -duc -no-color -threads 2 -rate-limit 2 -timeout 10"
+	const httpArgs = "-silent -json -status-code -title -tech-detect -web-server -ip -cname -ob -nfs -duc -no-color -threads 2 -rate-limit 2 -timeout 10 -H User-Agent: " + assessment.DefaultRequestUserAgent
 	const tlsArgs = "-silent -json -san -cn -hash sha256 -tls-version -duc -c 2 -timeout 5 -delay 1s"
 	runner := &webFakeRunner{fakeCommandRunner: &fakeCommandRunner{outputs: map[string][]byte{
 		"-version": []byte("scanner vtest"),

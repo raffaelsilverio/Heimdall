@@ -71,7 +71,7 @@ func TestNativeHTTPProbeMakesOneMeteredHeadAndDoesNotFollowRedirects(t *testing.
 	for _, entry := range collection.Logs {
 		events = append(events, entry.Event)
 	}
-	if strings.Join(events, ",") != "probe_started,request_completed,probe_completed" {
+	if strings.Join(events, ",") != "probe_started,request_profile,request_completed,probe_completed" {
 		t.Fatalf("probe logs are incomplete or out of order: %+v", collection.Logs)
 	}
 }
@@ -148,4 +148,66 @@ func nativeProbeProgram(t *testing.T, serverURL string) (assessment.Program, str
 	}
 	target := "http://127.0.0.1:" + strconv.Itoa(int(port)) + "/health"
 	return program, target
+}
+
+func TestNativeHTTPProbeAppliesTheProgramRequestProfileWithoutLoggingValues(t *testing.T) {
+	received := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		received <- request.Header.Clone()
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	program, target := nativeProbeProgram(t, server.URL)
+	profile := assessment.RequestProfile{
+		UserAgent: "Heimdall-Test/2.0",
+		Headers: []assessment.RequestHeader{
+			{Name: "x-bug-bounty", Value: "researcher-one"},
+			{Name: "X-Program", Value: "example"},
+		},
+	}
+	meter := &nativeProbeMeter{limit: 1}
+	collection, err := (NativeHTTPProbe{Transport: server.Client().Transport}).Execute(context.Background(), StageRequest{
+		Program: program, Stage: StageWeb, Targets: []string{target}, Limits: StageLimits{
+			RateLimitPerSecond: 1000, MaxConcurrency: 1, MaxTargets: 1, TimeoutSeconds: 5,
+		}, RequestMeter: meter, RequestBudget: 1, RequestProfile: profile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := <-received
+	if headers.Get("User-Agent") != "Heimdall-Test/2.0" ||
+		headers.Get("X-Bug-Bounty") != "researcher-one" || headers.Get("X-Program") != "example" {
+		t.Fatalf("request profile was not applied: %v", headers)
+	}
+	if meter.used.Load() != 1 || len(collection.Outcomes) != 1 {
+		t.Fatalf("profile request accounting is unexpected: meter=%d outcomes=%+v", meter.used.Load(), collection.Outcomes)
+	}
+	for _, entry := range collection.Logs {
+		if strings.Contains(entry.Detail, "researcher-one") || strings.Contains(entry.Detail, "example") {
+			t.Fatalf("request profile value leaked into logs: %+v", entry)
+		}
+	}
+	if !strings.Contains(collection.Logs[1].Detail, "revision=1") || !strings.Contains(collection.Logs[1].Detail, "headers=2") {
+		t.Fatalf("request profile summary is missing: %+v", collection.Logs[1])
+	}
+}
+
+func TestNativeHTTPProbeRejectsAnInvalidProfileBeforeTheMeter(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	program, target := nativeProbeProgram(t, server.URL)
+	meter := &nativeProbeMeter{limit: 1}
+	_, err := (NativeHTTPProbe{Transport: server.Client().Transport}).Execute(context.Background(), StageRequest{
+		Program: program, Stage: StageWeb, Targets: []string{target}, Limits: StageLimits{
+			RateLimitPerSecond: 1000, MaxConcurrency: 1, MaxTargets: 1, TimeoutSeconds: 5,
+		}, RequestMeter: meter, RequestBudget: 1,
+		RequestProfile: assessment.RequestProfile{Headers: []assessment.RequestHeader{{Name: "Authorization", Value: "secret"}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "managed by the request middleware") {
+		t.Fatalf("invalid request profile error = %v", err)
+	}
+	if requests.Load() != 0 || meter.used.Load() != 0 {
+		t.Fatalf("invalid profile reached the server or meter: requests=%d meter=%d", requests.Load(), meter.used.Load())
+	}
 }

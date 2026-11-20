@@ -18,7 +18,7 @@ import (
 
 func newProgramCommand() *cobra.Command {
 	command := &cobra.Command{Use: "program", Short: "Manage authorized programs"}
-	command.AddCommand(newProgramAddCommand(), newProgramListCommand(), newProgramShowCommand(), newProgramActivateCommand(), newProgramPauseCommand(), newProgramSourceCommand(), newProgramPolicyCommand(), newProgramAutomationCommand())
+	command.AddCommand(newProgramAddCommand(), newProgramListCommand(), newProgramShowCommand(), newProgramActivateCommand(), newProgramPauseCommand(), newProgramSourceCommand(), newProgramPolicyCommand(), newProgramAutomationCommand(), newProgramRequestProfileCommand())
 	return command
 }
 
@@ -171,6 +171,14 @@ func newProgramShowCommand() *cobra.Command {
 				return err
 			}
 			if err := writeProgramScope(cmd.OutOrStdout(), program.Scope); err != nil {
+				return err
+			}
+			profile, err := database.GetProgramRequestProfile(cmd.Context(), program.ID)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Request profile: revision %d, user-agent %q, headers %d\n",
+				profile.Revision, profile.UserAgent, len(profile.Headers)); err != nil {
 				return err
 			}
 			schedules, err := database.ListStageSchedules(cmd.Context(), program.ID)

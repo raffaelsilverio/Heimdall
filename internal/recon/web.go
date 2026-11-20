@@ -52,37 +52,16 @@ func (c WebCollector) Collect(ctx context.Context, request StageRequest) (Collec
 	if err := limits.Validate(); err != nil {
 		return collection, err
 	}
+	profile, profileArgs, err := webRequestProfile(request)
+	if err != nil {
+		return collection, err
+	}
 	stageContext, cancelStage := context.WithTimeout(ctx, time.Duration(limits.TimeoutSeconds)*time.Second)
 	defer cancelStage()
 
-	targets := make(map[string]struct{})
-	for _, host := range request.Targets {
-		for _, target := range request.Program.Scope.ActiveURLsForHost(host) {
-			targets[target] = struct{}{}
-		}
-	}
-	for _, host := range request.Program.Scope.DiscoveryDomains() {
-		for _, target := range request.Program.Scope.ActiveURLsForHost(host) {
-			targets[target] = struct{}{}
-		}
-	}
-	for _, entry := range request.Program.Scope.Entries {
-		if entry.Effect == assessment.ScopeInclude && entry.Type == assessment.ScopeIP {
-			for _, target := range request.Program.Scope.ActiveURLsForHost(entry.Value) {
-				targets[target] = struct{}{}
-			}
-		}
-	}
-	orderedTargets := make([]string, 0, len(targets))
-	for target := range targets {
-		orderedTargets = append(orderedTargets, target)
-	}
-	sort.Strings(orderedTargets)
-	if len(orderedTargets) == 0 {
-		return collection, errors.New("web stage has no active targets: add explicit ports to domain scopes or an in-scope URL")
-	}
-	if len(orderedTargets) > limits.MaxTargets {
-		return collection, fmt.Errorf("web stage has %d targets, exceeding the configured limit of %d", len(orderedTargets), limits.MaxTargets)
+	orderedTargets, err := webActiveTargets(request.Program, request.Targets, limits.MaxTargets)
+	if err != nil {
+		return collection, err
 	}
 
 	runner := c.Runner
@@ -128,9 +107,9 @@ func (c WebCollector) Collect(ctx context.Context, request StageRequest) (Collec
 		httpTimeout = 10
 	}
 	httpOutput, httpStderr, err := runner.RunWithInput(stageContext, resolved[0], input,
-		"-config", configPath, "-silent", "-json", "-status-code", "-title", "-tech-detect", "-web-server", "-ip", "-cname", "-ob",
-		"-nfs", "-duc", "-no-color", "-threads", strconv.Itoa(limits.MaxConcurrency),
-		"-rate-limit", strconv.Itoa(limits.RateLimitPerSecond), "-timeout", strconv.Itoa(httpTimeout))
+		append([]string{"-config", configPath, "-silent", "-json", "-status-code", "-title", "-tech-detect", "-web-server", "-ip", "-cname", "-ob",
+			"-nfs", "-duc", "-no-color", "-threads", strconv.Itoa(limits.MaxConcurrency),
+			"-rate-limit", strconv.Itoa(limits.RateLimitPerSecond), "-timeout", strconv.Itoa(httpTimeout)}, profileArgs...)...)
 	if err != nil {
 		collection.Tools[0].Status = "failed"
 		collection.Tools[0].Error = err.Error()
@@ -156,7 +135,7 @@ func (c WebCollector) Collect(ctx context.Context, request StageRequest) (Collec
 	}
 	if len(tlsTargets) == 0 {
 		collection.Tools[1].Status = "not_applicable"
-		collection.ProfileVersion = webProfileVersion(versions, limits)
+		collection.ProfileVersion = webProfileVersion(versions, limits, profile)
 		return collection, nil
 	}
 	tlsInput := []byte(strings.Join(tlsTargets, "\n") + "\n")
@@ -183,7 +162,7 @@ func (c WebCollector) Collect(ctx context.Context, request StageRequest) (Collec
 	if len(tlsArtifact) > 0 {
 		collection.Artifacts = append(collection.Artifacts, Artifact{Name: "tlsx.jsonl", MediaType: "application/x-ndjson", Data: tlsArtifact})
 	}
-	collection.ProfileVersion = webProfileVersion(versions, limits)
+	collection.ProfileVersion = webProfileVersion(versions, limits, profile)
 	return collection, nil
 }
 
@@ -376,11 +355,50 @@ func activeURLPort(parsed *url.URL) uint16 {
 	return 0
 }
 
-func webProfileVersion(versions []string, limits StageLimits) string {
-	material := fmt.Sprintf("%s\n%s\n%d\n%d\n%d\n%d", ProfileWebVersion, strings.Join(versions, "\n"),
-		limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds)
+func webProfileVersion(versions []string, limits StageLimits, profile assessment.RequestProfile) string {
+	material := fmt.Sprintf("%s\n%s\n%d\n%d\n%d\n%d\n%s", ProfileWebVersion, strings.Join(versions, "\n"),
+		limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds,
+		requestProfileFingerprint(profile))
 	sum := sha256.Sum256([]byte(material))
 	return ProfileWebVersion + "-" + hex.EncodeToString(sum[:8])
+}
+
+func webActiveTargets(program assessment.Program, hostSeeds []string, maximum int) ([]string, error) {
+	targets := make(map[string]struct{})
+	for _, host := range hostSeeds {
+		for _, target := range program.Scope.ActiveURLsForHost(host) {
+			targets[target] = struct{}{}
+		}
+	}
+	for _, host := range program.Scope.DiscoveryDomains() {
+		for _, target := range program.Scope.ActiveURLsForHost(host) {
+			targets[target] = struct{}{}
+		}
+	}
+	for _, entry := range program.Scope.Entries {
+		if entry.Effect != assessment.ScopeInclude || entry.Type != assessment.ScopeIP {
+			continue
+		}
+		for _, target := range program.Scope.ActiveURLsForHost(entry.Value) {
+			targets[target] = struct{}{}
+		}
+	}
+	ordered := make([]string, 0, len(targets))
+	for target := range targets {
+		ordered = append(ordered, target)
+	}
+	sort.Strings(ordered)
+	if len(ordered) == 0 {
+		return nil, errors.New("web stage has no active targets: add explicit ports to domain scopes or an in-scope URL")
+	}
+	if len(ordered) > maximum {
+		return nil, fmt.Errorf("web stage has %d targets, exceeding the configured limit of %d", len(ordered), maximum)
+	}
+	return ordered, nil
+}
+
+func webRequestProfile(request StageRequest) (assessment.RequestProfile, []string, error) {
+	return requestProfileForStage("web", request.RequestProfile)
 }
 
 func uniqueStrings(values []string) []string {

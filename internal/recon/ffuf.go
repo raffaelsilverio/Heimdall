@@ -32,21 +32,12 @@ func (FFUFCollector) ToolSpecs() []ToolSpec {
 
 func (c FFUFCollector) Collect(ctx context.Context, request StageRequest) (Collection, error) {
 	collection := Collection{}
-	limits := request.Limits
-	defaults := DefaultStageLimits(StageFFUF)
-	if limits.RateLimitPerSecond == 0 {
-		limits.RateLimitPerSecond = defaults.RateLimitPerSecond
+	limits, err := resolveStageLimits(StageFFUF, request.Limits)
+	if err != nil {
+		return collection, err
 	}
-	if limits.MaxConcurrency == 0 {
-		limits.MaxConcurrency = defaults.MaxConcurrency
-	}
-	if limits.MaxTargets == 0 {
-		limits.MaxTargets = defaults.MaxTargets
-	}
-	if limits.TimeoutSeconds == 0 {
-		limits.TimeoutSeconds = defaults.TimeoutSeconds
-	}
-	if err := limits.Validate(); err != nil {
+	profile, profileArgs, err := requestProfileForStage("ffuf", request.RequestProfile)
+	if err != nil {
 		return collection, err
 	}
 	baseTargets := activeWebTargets(request.Program.Scope, request.Targets)
@@ -110,10 +101,13 @@ func (c FFUFCollector) Collect(ctx context.Context, request StageRequest) (Colle
 		if err != nil {
 			return collection, fmt.Errorf("prepare scoped FFUF wordlist for %s: %w", base, err)
 		}
-		output, stderr, err := runner.Run(stageContext, resolved,
+		args := []string{
 			"-config", configPath, "-w", tempWordlist, "-u", fuzzURL, "-rate", strconv.Itoa(limits.RateLimitPerSecond),
 			"-t", strconv.Itoa(limits.MaxConcurrency), "-timeout", strconv.Itoa(requestTimeout),
-			"-maxtime", strconv.Itoa(limits.TimeoutSeconds), "-noninteractive", "-s", "-json", "-ignore-body", "-r=false")
+			"-maxtime", strconv.Itoa(limits.TimeoutSeconds), "-noninteractive", "-s", "-json", "-ignore-body", "-r=false",
+		}
+		args = append(args, profileArgs...)
+		output, stderr, err := runner.Run(stageContext, resolved, args...)
 		cleanupWordlist()
 		if err != nil {
 			collection.Tools[0].Status = "failed"
@@ -146,7 +140,7 @@ func (c FFUFCollector) Collect(ctx context.Context, request StageRequest) (Colle
 	}
 	sort.Strings(wordlistProfile)
 	combinedWordlistHash := sha256.Sum256([]byte(strings.Join(wordlistProfile, "\n")))
-	collection.ProfileVersion = ffufProfileVersion(version, hex.EncodeToString(combinedWordlistHash[:]), selectedWordsTotal, limits)
+	collection.ProfileVersion = ffufProfileVersion(version, hex.EncodeToString(combinedWordlistHash[:]), selectedWordsTotal, limits, profile)
 	return collection, nil
 }
 
@@ -331,9 +325,10 @@ func parseFFUFOutput(output []byte, scope assessment.Scope) ([]Observation, []by
 	return observations, sanitized.Bytes(), nil
 }
 
-func ffufProfileVersion(toolVersion, wordlistHash string, words int, limits StageLimits) string {
-	material := fmt.Sprintf("%s\n%s\n%s\n%d\n%d\n%d\n%d\n%d", ProfileFFUFVersion, toolVersion, wordlistHash, words,
-		limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds)
+func ffufProfileVersion(toolVersion, wordlistHash string, words int, limits StageLimits, profile assessment.RequestProfile) string {
+	material := fmt.Sprintf("%s\n%s\n%s\n%d\n%d\n%d\n%d\n%d\n%s", ProfileFFUFVersion, toolVersion, wordlistHash, words,
+		limits.RateLimitPerSecond, limits.MaxConcurrency, limits.MaxTargets, limits.TimeoutSeconds,
+		requestProfileFingerprint(profile))
 	sum := sha256.Sum256([]byte(material))
 	return ProfileFFUFVersion + "-" + hex.EncodeToString(sum[:8])
 }

@@ -57,6 +57,17 @@ O resultado deverá ser uma decisão explícita:
 - `DENY`
 - `REQUIRE_APPROVAL`
 
+## Request Policy Middleware
+
+O perfil de request de cada programa é uma barreira independente aplicada imediatamente antes do envio:
+
+- `User-Agent` obrigatório, com valor por omissão estável e revisão por programa.
+- Headers obrigatórios normalizados e ordenados de forma determinística.
+- Rejeição de headers de framing e de credenciais que o transporte ou o mecanismo de contas de teste devem controlar.
+- Rejeição de nomes inválidos, duplicados, valores vazios, CR/LF, bytes não imprimíveis e limites excedidos.
+- Aplicação a pedidos HTTP nativos e a todos os estágios que enviam HTTP (web, crawl, ffuf e nuclei); o handshake TLS não envia headers HTTP.
+- O perfil é lido do store antes de cada ação e a revisão é persistida no resultado da ação; valores de headers nunca são registados em logs. Uma configuração inválida falha fechada antes do primeiro pedido.
+
 ## Controlo de impacto
 
 As ferramentas deverão ser classificadas por nível de impacto.

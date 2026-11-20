@@ -147,6 +147,8 @@ program:
 
 O exemplo é ilustrativo. Os valores reais deverão ser obtidos das regras do programa e das autorizações do utilizador.
 
+O perfil de request é configurável por programa com `heimdall program request-profile set`: o `user_agent` e os `headers` são normalizados, ordenados e aplicados pelo middleware a pedidos HTTP nativos e ao estágio web. Headers de framing (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, etc.) e credenciais (`Authorization`, `Proxy-Authorization`, `Cookie`) são rejeitados; contas de teste e credenciais usam um mecanismo separado.
+
 ## Default: investigação apenas com contas de teste
 
 O comportamento padrão do Heimdall deverá ser restritivo relativamente aos dados dos utilizadores.
