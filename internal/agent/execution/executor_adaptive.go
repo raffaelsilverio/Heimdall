@@ -203,13 +203,11 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, fmt.Errorf("adaptive action rejected by policy: %w", err))
 		}
-		if grant.RequestBudget < len(grant.Targets) || len(grant.Targets) > recon.AgentHTTPProbeMaxTargets {
-			return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive native HTTP grant exceeds its one-request-per-target limit"))
+		if actionToolID(grant) != recon.AgentHTTPProbeID {
+			return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive executor only permits the native HTTP probe"))
 		}
-		for _, target := range grant.Targets {
-			if len(target) > recon.AgentHTTPProbeMaxURLBytes {
-				return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("adaptive native HTTP target exceeds the executor URL limit"))
-			}
+		if _, err := e.validateActionGrant(grant); err != nil {
+			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
 		duplicate := false
 		for _, target := range grant.Targets {

@@ -8,6 +8,7 @@ import (
 )
 
 const AgentHTTPProbeID = "native_http_probe"
+const AgentTLSProbeID = "native_tls_probe"
 
 type AgentActionAdapter interface {
 	Spec() AgentToolSpec
@@ -15,8 +16,8 @@ type AgentActionAdapter interface {
 }
 
 // AgentActionRegistry exposes only compiled, explicitly registered adapters.
-// Its default registry contains a single native HTTP probe; it has no shell or
-// arbitrary-command execution surface.
+// Its default registry contains the native HTTP and TLS probes; it has no shell
+// or arbitrary-command execution surface.
 type AgentActionRegistry struct {
 	Adapters []AgentActionAdapter
 }
@@ -32,7 +33,7 @@ func NewAgentActionRegistry(adapters ...AgentActionAdapter) (AgentActionRegistry
 }
 
 func NewDefaultAgentActionRegistry() AgentActionRegistry {
-	registry, err := NewAgentActionRegistry(NativeHTTPProbe{})
+	registry, err := NewAgentActionRegistry(NativeHTTPProbe{}, NativeTLSProbe{})
 	if err != nil {
 		panic(fmt.Sprintf("invalid compiled agent action registry: %v", err))
 	}

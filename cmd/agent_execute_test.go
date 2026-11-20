@@ -31,7 +31,7 @@ func TestAgentExecuteRequiresOneNativeWebAction(t *testing.T) {
 		"--home", t.TempDir(), "agent", "execute", "program-id",
 		"--action-run-id", "00000000-0000-4000-8000-000000000001", "--confirm-active-requests",
 	})
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "supports only stage") {
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "only support stage") {
 		t.Fatalf("non-web agent action returned %v", err)
 	}
 }

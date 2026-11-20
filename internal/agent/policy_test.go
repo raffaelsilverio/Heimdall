@@ -153,3 +153,39 @@ func TestScopeActionPolicyRequiresExplicitNmapPort(t *testing.T) {
 		t.Fatal("Nmap target with an unauthorized port was accepted")
 	}
 }
+
+func TestScopeActionPolicyNormalizesTheToolIdentity(t *testing.T) {
+	now := time.Date(2026, time.October, 3, 0, 0, 0, 0, time.UTC)
+	policy := ScopeActionPolicy{}
+	input := activePolicyContext(t, now)
+	proposal := ActionProposal{
+		Stage: recon.StageWeb, ScopeHash: input.Program.ScopeHash,
+		Targets: []string{"https://app.example.test/login"}, EstimatedCalls: 1,
+	}
+	grant, err := policy.Authorize(context.Background(), input, proposal, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.Proposal.Tool != recon.AgentHTTPProbeID {
+		t.Fatalf("empty tool id = %q, want the native HTTP probe default", grant.Proposal.Tool)
+	}
+
+	proposal.Tool = recon.AgentTLSProbeID
+	grant, err = policy.Authorize(context.Background(), input, proposal, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.Proposal.Tool != recon.AgentTLSProbeID {
+		t.Fatalf("explicit tool id = %q, want %q", grant.Proposal.Tool, recon.AgentTLSProbeID)
+	}
+	if err := policy.Revalidate(context.Background(), input, grant, now.Add(time.Second)); err != nil {
+		t.Fatalf("revalidation rejected an unchanged TLS grant: %v", err)
+	}
+
+	for _, tool := range []string{"Native-TLS", "tls probe", "tls/probe", strings.Repeat("a", 65)} {
+		proposal.Tool = tool
+		if _, err := policy.Authorize(context.Background(), input, proposal, now); err == nil {
+			t.Fatalf("invalid tool id %q was authorized", tool)
+		}
+	}
+}

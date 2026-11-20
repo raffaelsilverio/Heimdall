@@ -29,6 +29,7 @@ const (
 	CategoryHTTPEndpoint = "http_endpoint"
 	CategoryVulnFinding  = "vulnerability_finding"
 	CategoryHTTPProbe    = "http_probe_result"
+	CategoryTLSProbe     = "tls_probe_result"
 	maxArtifactOutput    = 32 << 20
 )
 

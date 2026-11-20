@@ -33,12 +33,12 @@ func newAgentToolsCommand() *cobra.Command {
 				return err
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "TOOL\tVERSION\tSTAGE\tCLASS\tTARGET TYPES\tSCOPE\tMAX TARGETS\tMAX REQUESTS\tACCOUNTING\tAUTONOMOUS\tARGUMENTS"); err != nil {
+			if _, err := fmt.Fprintln(writer, "TOOL\tVERSION\tSTAGE\tCLASS\tORIGIN\tISOLATION\tTARGET TYPES\tSCOPE\tMAX TARGETS\tMAX REQUESTS\tACCOUNTING\tAUTONOMOUS\tARGUMENTS"); err != nil {
 				return err
 			}
 			for _, entry := range entries {
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
-					entry.ID, entry.Version, entry.Stage, entry.Class,
+				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+					entry.ID, entry.Version, entry.Stage, entry.Class, entry.Origin, entry.Isolation,
 					strings.Join(entry.TargetTypes, ","), entry.ScopeRule,
 					entry.MaxTargets, entry.MaxRequests, entry.Accounting,
 					formatAgentToolAutonomy(entry.Autonomous), formatAgentToolArguments(entry.AgentToolSpec)); err != nil {

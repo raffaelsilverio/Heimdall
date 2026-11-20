@@ -115,8 +115,9 @@ func TestNativeHTTPProbeRejectsUnmeteredAndOutOfScopeRequests(t *testing.T) {
 
 func TestAgentActionRegistryRejectsUnregisteredAdapters(t *testing.T) {
 	registry := NewDefaultAgentActionRegistry()
-	if len(registry.Specs()) != 1 || registry.Specs()[0].ID != AgentHTTPProbeID {
-		t.Fatalf("default agent registry is not the expected minimal catalog: %+v", registry.Specs())
+	specs := registry.Specs()
+	if len(specs) != 2 || specs[0].ID != AgentHTTPProbeID || specs[1].ID != AgentTLSProbeID {
+		t.Fatalf("default agent registry is not the expected minimal catalog: %+v", specs)
 	}
 	if _, err := registry.Execute(context.Background(), "arbitrary-command", StageRequest{}); err == nil {
 		t.Fatal("unregistered action was dispatched")

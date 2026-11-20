@@ -24,6 +24,13 @@ const (
 	// AgentToolOriginCompiled marks a tool compiled into this binary.
 	AgentToolOriginCompiled = "compiled"
 
+	// AgentToolIsolationNativeMetered is the only isolation profile admitted
+	// today: an in-process Go adapter whose every HTTP round trip is charged by
+	// an injected RequestMeter before the transport runs. It has no filesystem
+	// access and starts no subprocess. New profiles require the admission work
+	// described in roadmap/24-isolamento-e-accounting-de-subprocessos.md.
+	AgentToolIsolationNativeMetered = "native_in_process_metered"
+
 	ToolArgumentStringList = "string_list"
 )
 
@@ -42,6 +49,11 @@ const (
 	AgentHTTPProbeMaxTargets = 8
 	// AgentHTTPProbeMaxURLBytes is the maximum accepted URL length per target.
 	AgentHTTPProbeMaxURLBytes = 2048
+	// AgentTLSProbeMaxTargets is the maximum number of targets one agentic TLS
+	// handshake action may contain.
+	AgentTLSProbeMaxTargets = 8
+	// AgentTLSProbeMaxURLBytes is the maximum accepted URL length per TLS target.
+	AgentTLSProbeMaxURLBytes = 2048
 )
 
 // AgentToolSpec is the reviewed, compiled metadata for one agent action. It is
@@ -54,6 +66,7 @@ type AgentToolSpec struct {
 	Class       string         `json:"class"`
 	Description string         `json:"description"`
 	Origin      string         `json:"origin"`
+	Isolation   string         `json:"isolation"`
 	TargetTypes []string       `json:"target_types"`
 	ScopeRule   string         `json:"scope_rule"`
 	MaxTargets  int            `json:"max_targets"`
@@ -94,6 +107,7 @@ func (spec AgentToolSpec) Validate() error {
 func (spec AgentToolSpec) AutonomousEligible() bool {
 	return spec.Class == AgentToolClassSafeActive &&
 		spec.Origin == AgentToolOriginCompiled &&
+		spec.Isolation == AgentToolIsolationNativeMetered &&
 		spec.Accounting == AgentToolAccountingOnePerTarget &&
 		spec.ScopeRule == AgentToolScopeProgramActiveURL &&
 		spec.Version != "" && len(spec.TargetTypes) > 0 &&
@@ -115,6 +129,9 @@ func (spec AgentToolSpec) validateIdentity() error {
 	}
 	if spec.Origin != AgentToolOriginCompiled {
 		return fmt.Errorf("agent tool %q has unsupported origin %q", spec.ID, spec.Origin)
+	}
+	if spec.Isolation != AgentToolIsolationNativeMetered {
+		return fmt.Errorf("agent tool %q has unsupported isolation %q", spec.ID, spec.Isolation)
 	}
 	return nil
 }
@@ -243,4 +260,10 @@ func (spec AgentToolSpec) targetMaxLength() int {
 		}
 	}
 	return 0
+}
+
+// TargetMaxLength returns the reviewed maximum length of one target. The
+// registry validates that a targets argument exists before any adapter runs.
+func (spec AgentToolSpec) TargetMaxLength() int {
+	return spec.targetMaxLength()
 }

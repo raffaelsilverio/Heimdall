@@ -28,12 +28,22 @@ func (e Executor) executeAction(ctx context.Context, program assessment.Program,
 	if guard != nil {
 		requestMeter = guardedRequestMeter{Base: meter, Guard: guard}
 	}
-	collection, runErr := e.Registry.Execute(ctx, recon.AgentHTTPProbeID, recon.StageRequest{
+	collection, runErr := e.Registry.Execute(ctx, actionToolID(grant), recon.StageRequest{
 		Program: program, Stage: grant.Stage, Targets: grant.Targets, Limits: grant.Limits,
 		RequestMeter: requestMeter, RequestBudget: grant.RequestBudget,
 	})
 	collection = recon.NormalizeAgentCollection(collection, e.now())
 	return e.persistActionResult(ctx, cycle, sequence, grant, actionID, collection, runErr, result)
+}
+
+// actionToolID resolves the reviewed adapter named by the grant. The policy
+// normalizes empty tool ids to the native HTTP probe, but the fallback keeps
+// persisted grants written before the tool field existed executable.
+func actionToolID(grant agent.AuthorizedAction) string {
+	if grant.Proposal.Tool != "" {
+		return grant.Proposal.Tool
+	}
+	return recon.AgentHTTPProbeID
 }
 
 func (e Executor) reserveAction(ctx context.Context, cycle store.AgentActionRun, sequence int, grant agent.AuthorizedAction) (string, error) {
@@ -65,7 +75,8 @@ func (e Executor) reserveAction(ctx context.Context, cycle store.AgentActionRun,
 
 func (e Executor) persistActionResult(ctx context.Context, cycle store.AgentActionRun, sequence int, grant agent.AuthorizedAction, actionID string, collection recon.Collection, runErr error, result *Result) error {
 	item := ActionResult{
-		ActionID: actionID, Sequence: sequence, Stage: grant.Stage, ActionClass: grant.Class,
+		ActionID: actionID, Sequence: sequence, Stage: grant.Stage, Tool: actionToolID(grant),
+		ActionClass:   grant.Class,
 		RequestBudget: grant.RequestBudget, Status: "completed", ProfileVersion: collection.ProfileVersion,
 		Observations: collection.Observations, Outcomes: collection.Outcomes, Logs: collection.Logs, Tools: collection.Tools,
 	}
@@ -89,7 +100,7 @@ func (e Executor) persistActionResult(ctx context.Context, cycle store.AgentActi
 	}
 	resultJSON, err := json.Marshal(storedActionResult{
 		ProgramID: cycle.ProgramID, ActionRunID: cycle.ID, ActionID: actionID, ScopeHash: grant.ScopeHash,
-		PolicyRevision: grant.PolicyRevision, Stage: grant.Stage, CompletedAt: e.now(),
+		PolicyRevision: grant.PolicyRevision, Stage: grant.Stage, Tool: actionToolID(grant), CompletedAt: e.now(),
 		ProfileVersion: collection.ProfileVersion, Observations: collection.Observations,
 		Outcomes: collection.Outcomes, Logs: collection.Logs, Tools: collection.Tools, Error: item.Error,
 		Notice: "Native one-request-per-target action result. No response body was collected; this record does not validate a vulnerability.",
@@ -101,7 +112,7 @@ func (e Executor) persistActionResult(ctx context.Context, cycle store.AgentActi
 		return fmt.Errorf("persist action %d result: %w", sequence, err)
 	}
 	if runErr != nil {
-		return fmt.Errorf("native HTTP action %d failed: %w", sequence, runErr)
+		return fmt.Errorf("native action %d failed: %w", sequence, runErr)
 	}
 	return nil
 }

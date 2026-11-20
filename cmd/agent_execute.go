@@ -21,12 +21,12 @@ func newAgentExecuteCommand() *cobra.Command {
 	var confirmActiveRequests bool
 	command := &cobra.Command{
 		Use:   "execute <program-id>",
-		Short: "Execute a bounded policy-authorized native HTTP plan",
-		Long:  "Reads a complete JSON action list from stdin and executes the supplied native HTTP HEAD actions sequentially under one per-run budget. Requires current program authorization, an enabled web schedule, explicit web policy, and --confirm-active-requests. No shell or subprocess tool is available; the executor does not autonomously invent follow-up actions.",
+		Short: "Execute a bounded policy-authorized native probe plan",
+		Long:  "Reads a complete JSON action list from stdin and executes the supplied native probe actions sequentially under one per-run budget. Each action dispatches the reviewed tool named in its `tool` field: one HTTP HEAD per target or one TLS handshake per target. Requires current program authorization, an enabled web schedule, explicit web policy, and --confirm-active-requests. No shell or subprocess tool is available; the executor does not autonomously invent follow-up actions.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !confirmActiveRequests {
-				return errors.New("this command sends active HTTP HEAD requests; pass --confirm-active-requests to continue")
+				return errors.New("this command sends active native probe requests; pass --confirm-active-requests to continue")
 			}
 			if _, err := uuid.Parse(actionRunID); err != nil {
 				return errors.New("--action-run-id must be a UUID so retries cannot silently replay a run")
@@ -77,7 +77,7 @@ func newAgentExecuteCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&actionRunID, "action-run-id", "", "Caller-generated UUID used as the idempotency key for this action run")
-	command.Flags().BoolVar(&confirmActiveRequests, "confirm-active-requests", false, "Confirm sending bounded active HTTP HEAD requests to the authorized targets")
+	command.Flags().BoolVar(&confirmActiveRequests, "confirm-active-requests", false, "Confirm sending bounded native probe requests (HTTP HEAD or TLS handshake) to the authorized targets")
 	_ = command.MarkFlagRequired("action-run-id")
 	_ = command.MarkFlagRequired("confirm-active-requests")
 	return command
@@ -95,7 +95,7 @@ func resolveExecutableActions(input agentPlanInput) ([]agent.ActionProposal, err
 	}
 	for _, action := range actions {
 		if action.Stage != recon.StageWeb {
-			return nil, fmt.Errorf("the initial native executor supports only stage %q", recon.StageWeb)
+			return nil, fmt.Errorf("native probes only support stage %q", recon.StageWeb)
 		}
 	}
 	return actions, nil

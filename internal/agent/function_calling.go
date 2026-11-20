@@ -138,7 +138,7 @@ func actionFromToolCall(call providers.ToolCall, registry recon.AgentActionRegis
 		return ActionProposal{}, fmt.Errorf("model tool call %q failed schema validation: %w", call.Name, err)
 	}
 	return ActionProposal{
-		Stage: spec.Stage, ScopeHash: policyContext.Program.ScopeHash,
+		Stage: spec.Stage, Tool: spec.ID, ScopeHash: policyContext.Program.ScopeHash,
 		Targets: targets, EstimatedCalls: len(targets),
 		Rationale: fmt.Sprintf("model tool call %s", spec.ID),
 	}, nil

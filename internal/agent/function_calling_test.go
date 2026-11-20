@@ -16,16 +16,25 @@ func TestPlanToolDefinitionsUsesReviewedSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(definitions) != 1 || definitions[0].Name != recon.AgentHTTPProbeID {
+	if len(definitions) != 2 {
 		t.Fatalf("unexpected tool definitions: %+v", definitions)
 	}
-	property, declared := definitions[0].Parameters.Properties["targets"]
+	var httpDefinition *providers.ToolDefinition
+	for index := range definitions {
+		if definitions[index].Name == recon.AgentHTTPProbeID {
+			httpDefinition = &definitions[index]
+		}
+	}
+	if httpDefinition == nil {
+		t.Fatalf("native HTTP probe definition is missing: %+v", definitions)
+	}
+	property, declared := httpDefinition.Parameters.Properties["targets"]
 	if !declared || property.Type != "array" || property.MaxItems != recon.AgentHTTPProbeMaxTargets ||
 		property.Items == nil || property.Items.Type != "string" || property.Items.MaxLength != recon.AgentHTTPProbeMaxURLBytes {
-		t.Fatalf("reviewed schema was not translated: %+v", definitions[0].Parameters)
+		t.Fatalf("reviewed schema was not translated: %+v", httpDefinition.Parameters)
 	}
-	if len(definitions[0].Parameters.Required) != 1 || definitions[0].Parameters.Required[0] != "targets" {
-		t.Fatalf("required arguments were not preserved: %+v", definitions[0].Parameters.Required)
+	if len(httpDefinition.Parameters.Required) != 1 || httpDefinition.Parameters.Required[0] != "targets" {
+		t.Fatalf("required arguments were not preserved: %+v", httpDefinition.Parameters.Required)
 	}
 }
 
@@ -51,7 +60,8 @@ func TestGeneratePlanConvertsNativeToolCalls(t *testing.T) {
 		action.Targets[0] != "https://app.example.test/login" || action.Rationale != "model tool call native_http_probe" {
 		t.Fatalf("unexpected native action: %+v", action)
 	}
-	if len(model.request.Tools) != 1 || model.request.Tools[0].Name != recon.AgentHTTPProbeID {
+	if len(model.request.Tools) != 2 || !advertisesTool(model.request.Tools, recon.AgentHTTPProbeID) ||
+		!advertisesTool(model.request.Tools, recon.AgentTLSProbeID) {
 		t.Fatalf("native tools were not advertised: %+v", model.request.Tools)
 	}
 	if !strings.Contains(model.request.Messages[0].Content, "Native function calling is enabled") {
@@ -81,7 +91,7 @@ func TestGeneratePlanFallsBackToTextWithoutToolCalls(t *testing.T) {
 	if draft.ToolCalls != 0 || len(draft.Actions) != 1 || draft.Actions[0].Rationale != "" {
 		t.Fatalf("text fallback was not preserved: %+v", draft)
 	}
-	if len(model.request.Tools) != 1 {
+	if len(model.request.Tools) != 2 {
 		t.Fatalf("tools were not advertised for the text fallback: %+v", model.request.Tools)
 	}
 }
@@ -174,5 +184,41 @@ func TestGeneratePlanRejectsToolRegistryOutsideThePolicy(t *testing.T) {
 	}
 	if model.calls != 0 {
 		t.Fatalf("model was called %d times despite an empty matching tool catalogue", model.calls)
+	}
+}
+
+func advertisesTool(tools []providers.ToolDefinition, name string) bool {
+	for _, tool := range tools {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGeneratePlanPreservesTheNativeToolIdentity(t *testing.T) {
+	now := time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC)
+	for _, tool := range []string{recon.AgentHTTPProbeID, recon.AgentTLSProbeID} {
+		t.Run(tool, func(t *testing.T) {
+			policyContext := activePolicyContext(t, now)
+			model := &fakePlanModel{response: providers.Response{ToolCalls: []providers.ToolCall{{
+				ID: "call_1", Name: tool, Arguments: `{"targets":["https://app.example.test/login"]}`,
+			}}}}
+			draft, err := GeneratePlan(context.Background(), model, "test-model", policyContext, nil, now,
+				WithToolRegistry(recon.NewDefaultAgentActionRegistry()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(draft.Actions) != 1 || draft.Actions[0].Tool != tool {
+				t.Fatalf("native action lost its tool identity: %+v", draft.Actions)
+			}
+			grant, err := (ScopeActionPolicy{}).Authorize(context.Background(), policyContext, draft.Actions[0], now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if grant.Proposal.Tool != tool {
+				t.Fatalf("authorized grant tool = %q, want %q", grant.Proposal.Tool, tool)
+			}
+		})
 	}
 }

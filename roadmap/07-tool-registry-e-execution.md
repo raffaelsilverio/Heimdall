@@ -64,9 +64,11 @@ MCP pode ser considerado como protocolo de integração, **não como fonte de co
 
 Subprocessos não são elegíveis para ciclos autónomos até terem accounting de request confiável, isolamento de egress e validação de argumentos. Estimativa por alvo ou parsing de stdout não contam como accounting real.
 
+O modelo de admissão, os perfis de isolamento (`native_in_process_metered`, `subprocess_network_denied`, `subprocess_metered_proxy`) e a evidência exigida estão definidos em `24-isolamento-e-accounting-de-subprocessos.md`. O catálogo só aceita hoje o perfil `native_in_process_metered`; o núcleo `AgentExecRunner` já implementa `subprocess_network_denied` com sandbox obrigatório (macOS `sandbox-exec`, Linux `bubblewrap`) e falha fechado quando não há sandbox. Nenhum subprocesso está registado no catálogo.
+
 As ferramentas que não cumpram estes requisitos podem continuar disponíveis nos fluxos normais de recon, mas não no executor agentic.
 
-`native_http_probe` é o exemplo atual de adapter de baixo impacto: uma requisição `HEAD` por alvo, sem seguir redirects e sem recolher corpos.
+`native_http_probe` e `native_tls_probe` são os exemplos atuais de adapters de baixo impacto. O primeiro faz uma requisição `HEAD` por alvo, sem seguir redirects e sem recolher corpos; o segundo faz um handshake TLS por alvo HTTPS e regista apenas metadados do certificado. O executor seleciona o adapter pelo campo `tool` da proposta e valida-o contra o Registry antes de qualquer pedido.
 
 ## Categorias
 

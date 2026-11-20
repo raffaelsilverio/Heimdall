@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,10 +26,23 @@ func agentExecTestBinary(t *testing.T, name string) string {
 	return absolute
 }
 
+func agentExecTestRunner() AgentExecRunner {
+	return AgentExecRunner{sandbox: directAgentExecSandbox{}}
+}
+
+type directAgentExecSandbox struct{}
+
+func (directAgentExecSandbox) Name() string { return "test_direct" }
+
+func (directAgentExecSandbox) Wrap(spec AgentExecSpec, argv []string, workDir string) (string, []string, error) {
+	return spec.Binary, argv, nil
+}
+
 func agentExecTestSpec(t *testing.T, binary string) AgentExecSpec {
 	t.Helper()
 	return AgentExecSpec{
 		ID: "test_tool", Language: AgentExecShell, Binary: binary,
+		Network: AgentExecNetworkNone, Filesystem: AgentExecFilesystemEphemeralTmp,
 		Timeout: 5 * time.Second, MaxStdoutBytes: 64 << 10, MaxStderrBytes: 64 << 10,
 	}
 }
@@ -46,7 +60,10 @@ func TestAgentExecSpecRejectsUnsafeMetadata(t *testing.T) {
 		{name: "empty binary", mutate: func(spec *AgentExecSpec) { spec.Binary = "" }, want: "absolute binary"},
 		{name: "relative binary", mutate: func(spec *AgentExecSpec) { spec.Binary = "echo" }, want: "absolute binary"},
 		{name: "unclean binary", mutate: func(spec *AgentExecSpec) { spec.Binary = "/bin/../bin/echo" }, want: "absolute binary"},
-		{name: "unclean work dir", mutate: func(spec *AgentExecSpec) { spec.WorkDir = "/tmp/../tmp" }, want: "work dir"},
+		{name: "missing network policy", mutate: func(spec *AgentExecSpec) { spec.Network = "" }, want: "network policy"},
+		{name: "unsupported network policy", mutate: func(spec *AgentExecSpec) { spec.Network = "metered_proxy" }, want: "unsupported network policy"},
+		{name: "missing filesystem policy", mutate: func(spec *AgentExecSpec) { spec.Filesystem = "" }, want: "filesystem policy"},
+		{name: "unsupported filesystem policy", mutate: func(spec *AgentExecSpec) { spec.Filesystem = "read_write" }, want: "unsupported filesystem policy"},
 		{name: "empty fixed argument", mutate: func(spec *AgentExecSpec) { spec.Argv = []string{""} }, want: "non-empty"},
 		{name: "newline fixed argument", mutate: func(spec *AgentExecSpec) { spec.Argv = []string{"a\nb"} }, want: "line breaks"},
 		{name: "command-string fixed argument", mutate: func(spec *AgentExecSpec) { spec.Argv = []string{"-c", "id"} }, want: "command-string"},
@@ -152,7 +169,7 @@ func TestAgentExecRunsReviewedInterpreterScripts(t *testing.T) {
 			spec := agentExecTestSpec(t, agentExecTestBinary(t, test.binary))
 			spec.Language = test.language
 			spec.Argv = []string{script}
-			result, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{})
+			result, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +182,7 @@ func TestAgentExecRunsReviewedInterpreterScripts(t *testing.T) {
 
 func TestAgentExecRejectsInvalidSpecBeforeStartingAProcess(t *testing.T) {
 	spec := agentExecTestSpec(t, "echo")
-	if _, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{}); !errors.Is(err, ErrAgentExecRejected) {
+	if _, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{}); !errors.Is(err, ErrAgentExecRejected) {
 		t.Fatalf("Execute error = %v, want ErrAgentExecRejected", err)
 	}
 }
@@ -174,7 +191,7 @@ func TestAgentExecRunsLiterallyWithoutShellInterpretation(t *testing.T) {
 	spec := agentExecTestSpec(t, agentExecTestBinary(t, "echo"))
 	spec.Argv = []string{"literal"}
 	spec.AllowedArgs = []string{"$(id)"}
-	result, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{Args: []string{"$(id)"}})
+	result, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{Args: []string{"$(id)"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +205,7 @@ func TestAgentExecRunsLiterallyWithoutShellInterpretation(t *testing.T) {
 
 func TestAgentExecReturnsNonZeroExitCode(t *testing.T) {
 	spec := agentExecTestSpec(t, agentExecTestBinary(t, "false"))
-	result, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{})
+	result, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{})
 	if !errors.Is(err, ErrAgentExecExit) {
 		t.Fatalf("Execute error = %v, want ErrAgentExecExit", err)
 	}
@@ -202,7 +219,7 @@ func TestAgentExecBoundsStdoutAndStderr(t *testing.T) {
 	spec.AllowStdin = true
 	spec.MaxStdinBytes = 1024
 	spec.MaxStdoutBytes = 16
-	result, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{
+	result, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{
 		Stdin: bytes.Repeat([]byte("a"), 1024),
 	})
 	if !errors.Is(err, ErrOutputLimit) {
@@ -216,7 +233,7 @@ func TestAgentExecBoundsStdoutAndStderr(t *testing.T) {
 func TestAgentExecTimesOutAndKillsTheProcess(t *testing.T) {
 	spec := agentExecTestSpec(t, agentExecTestBinary(t, "sleep"))
 	spec.AllowedArgs = []string{"30"}
-	result, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{
+	result, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{
 		Args: []string{"30"}, Timeout: 100 * time.Millisecond,
 	})
 	if !errors.Is(err, ErrAgentExecTimeout) {
@@ -233,7 +250,7 @@ func TestAgentExecHonorsCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	time.AfterFunc(50*time.Millisecond, cancel)
-	result, err := (AgentExecRunner{}).Execute(ctx, spec, AgentExecRequest{Args: []string{"30"}})
+	result, err := agentExecTestRunner().Execute(ctx, spec, AgentExecRequest{Args: []string{"30"}})
 	if !errors.Is(err, ErrAgentExecCanceled) {
 		t.Fatalf("Execute error = %v, want ErrAgentExecCanceled", err)
 	}
@@ -246,7 +263,7 @@ func TestAgentExecSanitizesEnvironmentAndAppliesReviewedEntries(t *testing.T) {
 	t.Setenv("HEIMDALL_TEST_SECRET", "leaked")
 	spec := agentExecTestSpec(t, agentExecTestBinary(t, "env"))
 	spec.Env = []string{"HEIMDALL_TEST_FLAG=on"}
-	result, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{})
+	result, err := agentExecTestRunner().Execute(context.Background(), spec, AgentExecRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,4 +281,103 @@ func TestAgentExecEnvironmentIsDeterministicAndOverridesBase(t *testing.T) {
 	if strings.Join(environment, ",") != "A=3,B=2,C=4" {
 		t.Fatalf("environment = %v, want sorted overrides", environment)
 	}
+}
+
+func TestAgentExecFailsClosedWithoutSandbox(t *testing.T) {
+	spec := agentExecTestSpec(t, agentExecTestBinary(t, "echo"))
+	if _, err := (AgentExecRunner{}).Execute(context.Background(), spec, AgentExecRequest{}); !errors.Is(err, ErrAgentExecSandboxUnavailable) {
+		t.Fatalf("Execute error = %v, want ErrAgentExecSandboxUnavailable", err)
+	}
+}
+
+func TestAgentExecPlatformSandboxConfinesNetworkAndWrites(t *testing.T) {
+	runner := NewAgentExecRunner()
+	if runner.sandbox == nil {
+		t.Skip("no reviewed sandbox is available on this host")
+	}
+	python := agentExecTestBinary(t, "python3")
+	script := filepath.Join(t.TempDir(), "sandbox_probe.py")
+	content := `import os, socket, sys
+
+cwd = os.getcwd()
+print("cwd=" + cwd)
+print("home=" + os.environ.get("HOME", ""))
+print("tmpdir=" + os.environ.get("TMPDIR", ""))
+
+try:
+    with open(os.path.join(cwd, "allowed.txt"), "w") as handle:
+        handle.write("ok")
+    print("write-workdir=ok")
+except Exception as exc:
+    print("write-workdir=blocked:" + type(exc).__name__)
+
+try:
+    with open(sys.argv[1], "w") as handle:
+        handle.write("bad")
+    print("write-outside=allowed")
+except Exception as exc:
+    print("write-outside=blocked:" + type(exc).__name__)
+
+try:
+    connection = socket.create_connection((sys.argv[2], int(sys.argv[3])), timeout=1)
+    connection.close()
+    print("network=connected")
+except Exception as exc:
+    print("network=blocked:" + type(exc).__name__)
+`
+	if err := os.WriteFile(script, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	spec := agentExecTestSpec(t, python)
+	spec.Language = AgentExecPython
+	spec.Argv = []string{script}
+	spec.AllowedArgs = []string{outside, host, port}
+	result, err := runner.Execute(context.Background(), spec, AgentExecRequest{Args: []string{outside, host, port}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(result.Stdout)
+	for _, expected := range []string{"write-workdir=ok", "write-outside=blocked:", "network=blocked:"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("sandboxed output omitted %q:\n%s", expected, output)
+		}
+	}
+	if _, err := os.Stat(outside); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("sandbox allowed a write outside the work dir: %v", err)
+	}
+	workDir := agentExecTestOutputValue(output, "cwd=")
+	if workDir == "" {
+		t.Fatalf("sandboxed output omitted the work dir:\n%s", output)
+	}
+	if _, err := os.Stat(workDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ephemeral work dir was not removed: %v", err)
+	}
+	if home := agentExecTestOutputValue(output, "home="); home != workDir {
+		t.Fatalf("HOME = %q, want the ephemeral work dir %q", home, workDir)
+	}
+	if tmp := agentExecTestOutputValue(output, "tmpdir="); tmp != workDir {
+		t.Fatalf("TMPDIR = %q, want the ephemeral work dir %q", tmp, workDir)
+	}
+	if result.Sandbox == "" || result.Sandbox == "test_direct" {
+		t.Fatalf("result recorded an unreviewed sandbox: %q", result.Sandbox)
+	}
+}
+
+func agentExecTestOutputValue(output, prefix string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return ""
 }

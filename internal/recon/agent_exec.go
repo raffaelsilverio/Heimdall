@@ -1,13 +1,9 @@
 package recon
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,6 +28,23 @@ const (
 	AgentExecShell  AgentExecLanguage = "shell"
 )
 
+// AgentExecNetwork is the reviewed network policy of a controlled tool. Only
+// network denial is admitted today; network-capable subprocesses require the
+// metered proxy profile described in roadmap/24.
+type AgentExecNetwork string
+
+const (
+	AgentExecNetworkNone AgentExecNetwork = "none"
+)
+
+// AgentExecFilesystem is the reviewed filesystem policy of a controlled tool.
+// Only an ephemeral per-run directory is admitted today.
+type AgentExecFilesystem string
+
+const (
+	AgentExecFilesystemEphemeralTmp AgentExecFilesystem = "ephemeral_tmp"
+)
+
 var (
 	// ErrAgentExecRejected means the spec or request failed validation before
 	// any process was started.
@@ -44,12 +57,16 @@ var (
 	// ErrAgentExecExit means the process ran but returned a non-zero exit code
 	// or failed to start.
 	ErrAgentExecExit = errors.New("agent execution exited with an error")
+	// ErrAgentExecSandboxUnavailable means no reviewed sandbox could enforce
+	// the requested network/filesystem policy, so no process was started.
+	ErrAgentExecSandboxUnavailable = errors.New("agent execution sandbox unavailable")
 )
 
 // AgentExecSpec is the compiled, reviewed contract for one subprocess tool. It
 // names an absolute binary, a fixed argv prefix, an exact allowlist of extra
-// arguments, a bounded environment and hard resource limits. There is no shell
-// interpolation and no dynamic tool discovery.
+// arguments, a bounded environment, an explicit isolation profile and hard
+// resource limits. There is no shell interpolation and no dynamic tool
+// discovery.
 type AgentExecSpec struct {
 	ID             string
 	Language       AgentExecLanguage
@@ -57,7 +74,8 @@ type AgentExecSpec struct {
 	Argv           []string
 	AllowedArgs    []string
 	Env            []string
-	WorkDir        string
+	Network        AgentExecNetwork
+	Filesystem     AgentExecFilesystem
 	AllowStdin     bool
 	Timeout        time.Duration
 	MaxStdinBytes  int
@@ -75,7 +93,8 @@ type AgentExecRequest struct {
 }
 
 // AgentExecResult records the bounded process outcome. Stdout and stderr never
-// exceed the spec caps; the truncation flags report discarded bytes.
+// exceed the spec caps; the truncation flags report discarded bytes. Sandbox
+// names the reviewed isolation implementation that wrapped the process.
 type AgentExecResult struct {
 	ExitCode        int
 	Stdout          []byte
@@ -84,6 +103,7 @@ type AgentExecResult struct {
 	StderrTruncated bool
 	TimedOut        bool
 	Canceled        bool
+	Sandbox         string
 	Duration        time.Duration
 }
 
@@ -93,6 +113,9 @@ func (spec AgentExecSpec) Validate() error {
 	if err := spec.validateIdentity(); err != nil {
 		return err
 	}
+	if err := spec.validateIsolation(); err != nil {
+		return err
+	}
 	if err := spec.validateArguments(); err != nil {
 		return err
 	}
@@ -100,6 +123,16 @@ func (spec AgentExecSpec) Validate() error {
 		return fmt.Errorf("agent exec %q: %w", spec.ID, err)
 	}
 	return spec.validateLimits()
+}
+
+func (spec AgentExecSpec) validateIsolation() error {
+	if spec.Network != AgentExecNetworkNone {
+		return fmt.Errorf("agent exec %q has unsupported network policy %q", spec.ID, spec.Network)
+	}
+	if spec.Filesystem != AgentExecFilesystemEphemeralTmp {
+		return fmt.Errorf("agent exec %q has unsupported filesystem policy %q", spec.ID, spec.Filesystem)
+	}
+	return nil
 }
 
 func (spec AgentExecSpec) validateIdentity() error {
@@ -114,9 +147,6 @@ func (spec AgentExecSpec) validateIdentity() error {
 	}
 	if !utf8.ValidString(spec.Binary) || strings.ContainsAny(spec.Binary, "\x00\n\r") {
 		return fmt.Errorf("agent exec %q binary path contains control characters", spec.ID)
-	}
-	if spec.WorkDir != "" && (!filepath.IsAbs(spec.WorkDir) || filepath.Clean(spec.WorkDir) != spec.WorkDir) {
-		return fmt.Errorf("agent exec %q requires a clean absolute work dir", spec.ID)
 	}
 	return nil
 }
@@ -309,119 +339,4 @@ var agentExecReservedEnv = map[string]bool{
 	"BASH_ENV": true, "ENV": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
 	"PYTHONPATH": true, "PYTHONSTARTUP": true, "GOFLAGS": true, "GOTOOLCHAIN": true,
-}
-
-// AgentExecRunner is the only controlled subprocess entry point. It executes an
-// absolute binary without a shell, isolates the process group, enforces the
-// timeout and output caps, and returns the exit code for audit.
-type AgentExecRunner struct {
-	// BaseEnv replaces the sanitized host environment when non-nil. It is meant
-	// for embedding and tests; callers must not populate it with secrets.
-	BaseEnv []string
-}
-
-// Execute validates the spec and request, then runs the process once. The
-// result is populated even when the process times out, is canceled, exceeds an
-// output cap, or exits non-zero.
-func (runner AgentExecRunner) Execute(ctx context.Context, spec AgentExecSpec, request AgentExecRequest) (AgentExecResult, error) {
-	if err := spec.Validate(); err != nil {
-		return AgentExecResult{}, fmt.Errorf("%w: %v", ErrAgentExecRejected, err)
-	}
-	if err := spec.ValidateRequest(request); err != nil {
-		return AgentExecResult{}, fmt.Errorf("%w: %v", ErrAgentExecRejected, err)
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	timeout := request.Timeout
-	if timeout <= 0 {
-		timeout = spec.Timeout
-	}
-	execContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	command := exec.CommandContext(execContext, spec.Binary, agentExecArgv(spec, request)...) // #nosec G204 -- binary is a reviewed clean absolute path, argv is exact-match allowlisted and no shell is used.
-	command.Env = agentExecEnvironment(runner.BaseEnv, spec.Env)
-	command.Dir = spec.WorkDir
-	if len(request.Stdin) > 0 {
-		command.Stdin = bytes.NewReader(request.Stdin)
-	}
-	stdout := &limitedBuffer{limit: spec.MaxStdoutBytes}
-	stderr := &limitedBuffer{limit: spec.MaxStderrBytes}
-	command.Stdout = stdout
-	command.Stderr = stderr
-	configureAgentExecProcess(command)
-	command.Cancel = func() error { return killAgentExecProcess(command) }
-	command.WaitDelay = 2 * time.Second
-	started := time.Now()
-	runErr := command.Run()
-	result := newAgentExecResult(command, stdout, stderr, started)
-	if runErr == nil && !stdout.exceeded && !stderr.exceeded {
-		return result, nil
-	}
-	runErr = agentExecRunError(ctx, execContext, timeout, stdout, stderr, runErr)
-	result.TimedOut = errors.Is(runErr, ErrAgentExecTimeout)
-	result.Canceled = errors.Is(runErr, ErrAgentExecCanceled)
-	return result, runErr
-}
-
-func agentExecArgv(spec AgentExecSpec, request AgentExecRequest) []string {
-	argv := make([]string, 0, len(spec.Argv)+len(request.Args))
-	argv = append(argv, spec.Argv...)
-	return append(argv, request.Args...)
-}
-
-func newAgentExecResult(command *exec.Cmd, stdout, stderr *limitedBuffer, started time.Time) AgentExecResult {
-	result := AgentExecResult{
-		Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
-		StdoutTruncated: stdout.exceeded, StderrTruncated: stderr.exceeded,
-		Duration: time.Since(started),
-	}
-	if command.ProcessState != nil {
-		result.ExitCode = command.ProcessState.ExitCode()
-	}
-	return result
-}
-
-func agentExecRunError(ctx, execContext context.Context, timeout time.Duration, stdout, stderr *limitedBuffer, runErr error) error {
-	if errors.Is(execContext.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("%w after %s", ErrAgentExecTimeout, timeout)
-	}
-	if execContext.Err() != nil || ctx.Err() != nil {
-		cause := execContext.Err()
-		if cause == nil {
-			cause = ctx.Err()
-		}
-		return fmt.Errorf("%w: %v", ErrAgentExecCanceled, cause)
-	}
-	if stdout.exceeded || stderr.exceeded {
-		return fmt.Errorf("%w: stdout=%t stderr=%t", ErrOutputLimit, stdout.exceeded, stderr.exceeded)
-	}
-	return fmt.Errorf("%w: %v", ErrAgentExecExit, runErr)
-}
-
-func agentExecEnvironment(base, overrides []string) []string {
-	if base == nil {
-		base = safeToolEnvironment()
-	}
-	values := make(map[string]string, len(base)+len(overrides))
-	for _, entry := range base {
-		key, value, found := strings.Cut(entry, "=")
-		if found {
-			values[key] = value
-		}
-	}
-	for _, entry := range overrides {
-		key, value, _ := strings.Cut(entry, "=")
-		values[key] = value
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	result := make([]string, 0, len(keys))
-	for _, key := range keys {
-		result = append(result, key+"="+values[key])
-	}
-	return result
 }

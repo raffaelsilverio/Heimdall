@@ -9,7 +9,9 @@ func TestAgentToolsListsOnlyTheCompiledAgentCatalog(t *testing.T) {
 	home := t.TempDir()
 	output := executeCommand(t, home, "agent", "tools")
 	for _, expected := range []string{
-		"native_http_probe", "native-http-v1", "safe_active", "one_request_per_target",
+		"native_http_probe", "native-http-v1", "native_tls_probe", "native-tls-v1",
+		"safe_active", "compiled",
+		"native_in_process_metered", "one_request_per_target",
 		"http_url", "program_active_url", "yes", "targets:string_list required",
 	} {
 		if !strings.Contains(output, expected) {
@@ -25,6 +27,8 @@ func TestAgentToolsListsOnlyTheCompiledAgentCatalog(t *testing.T) {
 	jsonOutput := executeCommand(t, home, "agent", "tools", "--json")
 	for _, expected := range []string{
 		`"id": "native_http_probe"`, `"version": "native-http-v1"`, `"origin": "compiled"`,
+		`"id": "native_tls_probe"`, `"version": "native-tls-v1"`,
+		`"isolation": "native_in_process_metered"`,
 		`"scope_rule": "program_active_url"`, `"max_requests": 8`, `"max_items": 8`,
 		`"autonomous": true`, `"description":`,
 	} {

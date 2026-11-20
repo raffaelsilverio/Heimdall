@@ -22,33 +22,45 @@ func validAgentToolSpec() AgentToolSpec {
 	return NativeHTTPProbe{}.Spec()
 }
 
-func TestDefaultAgentRegistryExposesReviewedNativeProbe(t *testing.T) {
+func TestDefaultAgentRegistryExposesReviewedNativeProbes(t *testing.T) {
 	registry := NewDefaultAgentActionRegistry()
 	specs := registry.Specs()
-	if len(specs) != 1 {
-		t.Fatalf("default agent registry contains %d tools, want 1: %+v", len(specs), specs)
+	if len(specs) != 2 {
+		t.Fatalf("default agent registry contains %d tools, want 2: %+v", len(specs), specs)
 	}
-	spec := specs[0]
-	if spec.ID != AgentHTTPProbeID || spec.Version != agentHTTPProbeVersion ||
-		spec.Stage != StageWeb || spec.Class != AgentToolClassSafeActive ||
-		spec.Origin != AgentToolOriginCompiled || !spec.AutonomousEligible() {
-		t.Fatalf("native probe identity or autonomy metadata is incomplete: %+v", spec)
+	want := map[string]string{
+		AgentHTTPProbeID: agentHTTPProbeVersion,
+		AgentTLSProbeID:  agentTLSProbeVersion,
 	}
-	if spec.Accounting != AgentToolAccountingOnePerTarget ||
-		spec.MaxTargets != AgentHTTPProbeMaxTargets || spec.MaxRequests != AgentHTTPProbeMaxTargets {
-		t.Fatalf("native probe accounting metadata is incomplete: %+v", spec)
+	for _, spec := range specs {
+		version, declared := want[spec.ID]
+		if !declared {
+			t.Fatalf("unexpected compiled tool %q", spec.ID)
+		}
+		if spec.Version != version ||
+			spec.Stage != StageWeb || spec.Class != AgentToolClassSafeActive ||
+			spec.Origin != AgentToolOriginCompiled || spec.Isolation != AgentToolIsolationNativeMetered ||
+			!spec.AutonomousEligible() {
+			t.Fatalf("native tool identity or autonomy metadata is incomplete: %+v", spec)
+		}
+		if spec.Accounting != AgentToolAccountingOnePerTarget ||
+			spec.MaxTargets != AgentHTTPProbeMaxTargets || spec.MaxRequests != AgentHTTPProbeMaxTargets {
+			t.Fatalf("native tool accounting metadata is incomplete: %+v", spec)
+		}
+		if len(spec.TargetTypes) != 1 || spec.TargetTypes[0] != AgentToolTargetHTTPURL ||
+			spec.ScopeRule != AgentToolScopeProgramActiveURL {
+			t.Fatalf("native tool target/scope metadata is incomplete: %+v", spec)
+		}
+		if len(spec.Arguments) != 1 || spec.Arguments[0].Name != "targets" ||
+			spec.Arguments[0].Type != ToolArgumentStringList || !spec.Arguments[0].Required {
+			t.Fatalf("native tool argument schema is incomplete: %+v", spec.Arguments)
+		}
 	}
-	if len(spec.TargetTypes) != 1 || spec.TargetTypes[0] != AgentToolTargetHTTPURL ||
-		spec.ScopeRule != AgentToolScopeProgramActiveURL {
-		t.Fatalf("native probe target/scope metadata is incomplete: %+v", spec)
-	}
-	if len(spec.Arguments) != 1 || spec.Arguments[0].Name != "targets" ||
-		spec.Arguments[0].Type != ToolArgumentStringList || !spec.Arguments[0].Required {
-		t.Fatalf("native probe argument schema is incomplete: %+v", spec.Arguments)
-	}
-	lookedUp, err := registry.Lookup(AgentHTTPProbeID)
-	if err != nil || lookedUp.ID != spec.ID || len(lookedUp.Arguments) != 1 {
-		t.Fatalf("Lookup returned %+v, %v; want the registered native probe", lookedUp, err)
+	for id, version := range want {
+		lookedUp, err := registry.Lookup(id)
+		if err != nil || lookedUp.ID != id || lookedUp.Version != version || len(lookedUp.Arguments) != 1 {
+			t.Fatalf("Lookup(%q) returned %+v, %v; want the registered native tool", id, lookedUp, err)
+		}
 	}
 	if _, err := registry.Lookup("unregistered_probe"); err == nil || !strings.Contains(err.Error(), "not in the compiled registry") {
 		t.Fatalf("Lookup error = %v, want an unregistered-tool rejection", err)
@@ -68,6 +80,11 @@ func TestAgentToolSpecAutonomousEligibility(t *testing.T) {
 	spec.MaxRequests = spec.MaxTargets - 1
 	if spec.AutonomousEligible() {
 		t.Fatal("a spec whose max requests cannot cover every target must not be autonomy-eligible")
+	}
+	spec = validAgentToolSpec()
+	spec.Isolation = "subprocess_metered_proxy"
+	if spec.AutonomousEligible() {
+		t.Fatal("an unimplemented isolation profile must not be autonomy-eligible")
 	}
 }
 
@@ -105,6 +122,8 @@ func TestAgentRegistryRejectsInvalidMetadata(t *testing.T) {
 		{name: "unsupported stage", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Stage = StageOSINT })}, want: "unsupported stage"},
 		{name: "unsupported class", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Class = "sensitive" })}, want: "unsupported action class"},
 		{name: "unsupported origin", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Origin = "mcp" })}, want: "unsupported origin"},
+		{name: "empty isolation", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Isolation = "" })}, want: "unsupported isolation"},
+		{name: "unsupported isolation", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Isolation = "subprocess_metered_proxy" })}, want: "unsupported isolation"},
 		{name: "missing description", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.Description = " " })}, want: "description"},
 		{name: "no target types", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.TargetTypes = nil })}, want: "target types"},
 		{name: "unsupported target type", adapter: &countingAgentAdapter{spec: mutate(func(spec *AgentToolSpec) { spec.TargetTypes = []string{"dns_hostname"} })}, want: "unsupported target type"},

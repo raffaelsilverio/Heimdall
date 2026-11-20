@@ -25,6 +25,7 @@ func (NativeHTTPProbe) Spec() AgentToolSpec {
 	return AgentToolSpec{
 		ID: AgentHTTPProbeID, Version: agentHTTPProbeVersion,
 		Stage: StageWeb, Class: AgentToolClassSafeActive, Origin: AgentToolOriginCompiled,
+		Isolation:   AgentToolIsolationNativeMetered,
 		Description: "Send one bounded HEAD request per authorized target without redirects, bodies, retries, or a shell.",
 		TargetTypes: []string{AgentToolTargetHTTPURL}, ScopeRule: AgentToolScopeProgramActiveURL,
 		MaxTargets: AgentHTTPProbeMaxTargets, MaxRequests: AgentHTTPProbeMaxTargets,
@@ -125,34 +126,7 @@ func (probe NativeHTTPProbe) now() time.Time {
 }
 
 func validateNativeHTTPProbeRequest(request StageRequest) ([]string, error) {
-	if request.Stage != StageWeb {
-		return nil, fmt.Errorf("native HTTP probe only supports the %q stage", StageWeb)
-	}
-	if request.RequestMeter == nil {
-		return nil, errors.New("native HTTP probe requires a durable request meter")
-	}
-	if request.Program.ID == "" || request.Program.Status != assessment.ProgramActive || !request.Program.ExpiresAt.After(time.Now().UTC()) {
-		return nil, errors.New("native HTTP probe requires an active program with current authorization")
-	}
-	fingerprint, err := assessment.ScopeFingerprint(request.Program.Scope)
-	if err != nil || fingerprint != request.Program.ScopeHash {
-		return nil, errors.New("native HTTP probe received an invalid or stale scope")
-	}
-	limits := request.Limits
-	if err := limits.Validate(); err != nil {
-		return nil, fmt.Errorf("validate native HTTP probe limits: %w", err)
-	}
-	if len(request.Targets) == 0 || len(request.Targets) > limits.MaxTargets {
-		return nil, errors.New("native HTTP probe targets are empty or exceed the configured target limit")
-	}
-	targets, err := validateNativeProbeTargets(request.Program.Scope, request.Targets)
-	if err != nil {
-		return nil, err
-	}
-	if request.RequestBudget < len(targets) {
-		return nil, errors.New("native HTTP probe request budget must cover one HEAD per target")
-	}
-	return targets, nil
+	return validateNativeProbeEnvelope(request, "native HTTP probe", "one HEAD per target", validateNativeProbeTargets)
 }
 
 func validateNativeProbeTargets(scope assessment.Scope, proposed []string) ([]string, error) {

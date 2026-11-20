@@ -35,6 +35,7 @@ type ActionPolicyContext struct {
 
 type ActionProposal struct {
 	Stage          string   `json:"stage"`
+	Tool           string   `json:"tool,omitempty"`
 	ScopeHash      string   `json:"scope_hash"`
 	Targets        []string `json:"targets"`
 	EstimatedCalls int      `json:"estimated_calls"`
@@ -64,7 +65,7 @@ type ActionPolicy interface {
 
 type ScopeActionPolicy struct{}
 
-func (ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPolicyContext, proposal ActionProposal, now time.Time) (AuthorizedAction, error) {
+func (policy ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPolicyContext, proposal ActionProposal, now time.Time) (AuthorizedAction, error) {
 	if err := ctx.Err(); err != nil {
 		return AuthorizedAction{}, err
 	}
@@ -97,6 +98,10 @@ func (ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPoli
 	if err != nil {
 		return AuthorizedAction{}, err
 	}
+	tool, err := normalizeActionTool(proposal.Tool)
+	if err != nil {
+		return AuthorizedAction{}, err
+	}
 	if !containsStage(policyContext.Policy.AllowedStages, stage) || !containsActionClass(policyContext.Policy.AllowedClasses, class) {
 		return AuthorizedAction{}, fmt.Errorf("stage %q / action class %q is not allowlisted for this program", stage, class)
 	}
@@ -111,12 +116,8 @@ func (ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPoli
 		policyContext.Policy.MaxRequestsPerAction <= 0 || policyContext.Policy.MaxTargetsPerAction <= 0 {
 		return AuthorizedAction{}, errors.New("program agent policy has no positive action, request, and target budgets")
 	}
-	if policyContext.ActionsUsed < 0 || policyContext.ActionsUsed >= policyContext.Policy.MaxActionsPerRun {
-		return AuthorizedAction{}, errors.New("program agent action budget is exhausted")
-	}
-	if proposal.EstimatedCalls < 1 || proposal.EstimatedCalls > policyContext.Policy.MaxRequestsPerAction ||
-		policyContext.RequestsUsed < 0 || policyContext.RequestsUsed+proposal.EstimatedCalls > policyContext.Policy.MaxRequestsPerRun {
-		return AuthorizedAction{}, errors.New("proposed action exceeds the program request budget")
+	if err := policy.validateUsedBudget(policyContext, proposal); err != nil {
+		return AuthorizedAction{}, err
 	}
 
 	maxTargets := policyContext.Policy.MaxTargetsPerAction
@@ -135,10 +136,23 @@ func (ScopeActionPolicy) Authorize(ctx context.Context, policyContext ActionPoli
 		ProgramID: program.ID, ScopeHash: program.ScopeHash, PolicyRevision: policyContext.Policy.Revision,
 		Stage: stage, Class: class, Targets: targets, RequestBudget: proposal.EstimatedCalls, Limits: limits,
 		ValidUntil: validUntil, Proposal: ActionProposal{
-			Stage: stage, ScopeHash: proposal.ScopeHash, Targets: append([]string(nil), proposal.Targets...),
+			Stage: stage, Tool: tool, ScopeHash: proposal.ScopeHash, Targets: append([]string(nil), proposal.Targets...),
 			EstimatedCalls: proposal.EstimatedCalls, Rationale: proposal.Rationale, TaskID: proposal.TaskID,
 		},
 	}, nil
+}
+
+// validateUsedBudget checks the consumed action and request counters against
+// the program budgets before a new action is authorized.
+func (policy ScopeActionPolicy) validateUsedBudget(policyContext ActionPolicyContext, proposal ActionProposal) error {
+	if policyContext.ActionsUsed < 0 || policyContext.ActionsUsed >= policyContext.Policy.MaxActionsPerRun {
+		return errors.New("program agent action budget is exhausted")
+	}
+	if proposal.EstimatedCalls < 1 || proposal.EstimatedCalls > policyContext.Policy.MaxRequestsPerAction ||
+		policyContext.RequestsUsed < 0 || policyContext.RequestsUsed+proposal.EstimatedCalls > policyContext.Policy.MaxRequestsPerRun {
+		return errors.New("proposed action exceeds the program request budget")
+	}
+	return nil
 }
 
 func (policy ScopeActionPolicy) Revalidate(ctx context.Context, current ActionPolicyContext, grant AuthorizedAction, now time.Time) error {
@@ -156,10 +170,28 @@ func (policy ScopeActionPolicy) Revalidate(ctx context.Context, current ActionPo
 		return err
 	}
 	if refreshed.Class != grant.Class || refreshed.Stage != grant.Stage || refreshed.Limits != grant.Limits ||
+		refreshed.Proposal.Tool != grant.Proposal.Tool ||
 		refreshed.RequestBudget != grant.RequestBudget || !sameStrings(refreshed.Targets, grant.Targets) {
 		return errors.New("authorized action no longer matches the current policy")
 	}
 	return nil
+}
+
+func normalizeActionTool(tool string) (string, error) {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return recon.AgentHTTPProbeID, nil
+	}
+	if len(tool) > 64 {
+		return "", errors.New("action tool id exceeds 64 bytes")
+	}
+	for _, character := range tool {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_' {
+			continue
+		}
+		return "", fmt.Errorf("action tool id %q must use lowercase letters, digits, or underscores", tool)
+	}
+	return tool, nil
 }
 
 func actionClassForStage(stage string) (ActionClass, error) {

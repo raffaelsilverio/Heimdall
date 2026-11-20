@@ -47,6 +47,7 @@ type ActionResult struct {
 	ActionID       string               `json:"action_id"`
 	Sequence       int                  `json:"sequence"`
 	Stage          string               `json:"stage"`
+	Tool           string               `json:"tool,omitempty"`
 	ActionClass    agent.ActionClass    `json:"action_class"`
 	RequestBudget  int                  `json:"request_budget"`
 	RequestsUsed   int                  `json:"requests_used"`
@@ -66,6 +67,7 @@ type storedActionResult struct {
 	ScopeHash      string               `json:"scope_hash"`
 	PolicyRevision int64                `json:"policy_revision"`
 	Stage          string               `json:"stage"`
+	Tool           string               `json:"tool"`
 	CompletedAt    time.Time            `json:"completed_at"`
 	ProfileVersion string               `json:"profile_version,omitempty"`
 	Observations   []recon.Observation  `json:"observations,omitempty"`
@@ -76,15 +78,17 @@ type storedActionResult struct {
 	Notice         string               `json:"notice"`
 }
 
-// ExecuteOne performs one explicitly supplied proposal through the single
-// registered native HTTP adapter. No model call or subprocess is involved.
+// ExecuteOne performs one explicitly supplied proposal through the reviewed
+// native adapter named by the proposal (the HTTP probe when the tool is
+// omitted). No model call or subprocess is involved.
 func (e Executor) ExecuteOne(ctx context.Context, programID, actionRunID string, proposal agent.ActionProposal, now time.Time) (Result, error) {
 	return e.ExecutePlan(ctx, programID, actionRunID, []agent.ActionProposal{proposal}, now)
 }
 
-// ExecutePlan executes a prevalidated, ordered list of native HTTP actions
-// sequentially under one durable budget. It is supervised: the caller supplies
-// the complete plan, and a failed action stops the remaining sequence.
+// ExecutePlan executes a prevalidated, ordered list of reviewed native actions
+// sequentially under one durable budget. Each action is dispatched to the
+// registry entry named by its tool. It is supervised: the caller supplies the
+// complete plan, and a failed action stops the remaining sequence.
 func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string, proposals []agent.ActionProposal, now time.Time) (Result, error) {
 	if e.Store == nil {
 		return Result{}, errors.New("agent action executor requires a store")
@@ -104,9 +108,6 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 	}
 	if len(e.Registry.Adapters) == 0 {
 		e.Registry = recon.NewDefaultAgentActionRegistry()
-	}
-	if !e.hasNativeHTTPProbe() {
-		return Result{}, errors.New("agent executor requires the compiled native HTTP probe adapter")
 	}
 	now = normalizeNow(now, e.Clock)
 	_, policyContext, err := e.loadPolicyContext(ctx, programID)
@@ -131,19 +132,11 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 	}
 	for _, decision := range plan.Decisions {
 		grant := decision.AuthorizedCandidate
-		if grant == nil || grant.Stage != recon.StageWeb {
-			return Result{}, fmt.Errorf("the initial executor supports only the native %q stage", recon.StageWeb)
+		if grant == nil {
+			return Result{}, errors.New("agent action plan contains no authorized candidate")
 		}
-		if grant.RequestBudget < len(grant.Targets) {
-			return Result{}, errors.New("request budget must cover one native HEAD request per authorized target")
-		}
-		if len(grant.Targets) > recon.AgentHTTPProbeMaxTargets {
-			return Result{}, fmt.Errorf("native HTTP executor is limited to %d targets per action", recon.AgentHTTPProbeMaxTargets)
-		}
-		for _, target := range grant.Targets {
-			if len(target) > recon.AgentHTTPProbeMaxURLBytes {
-				return Result{}, fmt.Errorf("native HTTP target exceeds %d bytes", recon.AgentHTTPProbeMaxURLBytes)
-			}
+		if _, err := e.validateActionGrant(*grant); err != nil {
+			return Result{}, err
 		}
 	}
 
@@ -179,8 +172,8 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
-		if grant.Stage != recon.StageWeb || grant.RequestBudget < len(grant.Targets) {
-			return e.closeFailedPlan(ctx, result, programID, cycle.ID, errors.New("native action grant no longer satisfies the one-request-per-target contract"))
+		if _, err := e.validateActionGrant(grant); err != nil {
+			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
 		if err := e.executeAction(ctx, currentProgram, cycle, index+1, proposal, grant, &result, nil); err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
@@ -270,6 +263,36 @@ func (e Executor) hasNativeHTTPProbe() bool {
 		}
 	}
 	return false
+}
+
+// validateActionGrant checks an authorized grant against the reviewed catalog
+// entry named by its proposal. The tool id has already been normalized by the
+// policy, so a grant without an explicit tool resolves to the native HTTP
+// probe. No request is made here.
+func (e Executor) validateActionGrant(grant agent.AuthorizedAction) (recon.AgentToolSpec, error) {
+	spec, err := e.Registry.Lookup(actionToolID(grant))
+	if err != nil {
+		return recon.AgentToolSpec{}, err
+	}
+	if grant.Stage != spec.Stage {
+		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q requires stage %q", spec.ID, spec.Stage)
+	}
+	if string(grant.Class) != spec.Class {
+		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q requires class %q", spec.ID, spec.Class)
+	}
+	if len(grant.Targets) > spec.MaxTargets {
+		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q accepts at most %d targets", spec.ID, spec.MaxTargets)
+	}
+	if grant.RequestBudget < len(grant.Targets) {
+		return recon.AgentToolSpec{}, fmt.Errorf("agent action %q request budget must cover every target", spec.ID)
+	}
+	maxLength := spec.TargetMaxLength()
+	for _, target := range grant.Targets {
+		if len(target) > maxLength {
+			return recon.AgentToolSpec{}, fmt.Errorf("agent action %q target exceeds %d bytes", spec.ID, maxLength)
+		}
+	}
+	return spec, nil
 }
 
 func (e Executor) readConsumedRequests(ctx context.Context, programID, runID, actionID string) (int, error) {
