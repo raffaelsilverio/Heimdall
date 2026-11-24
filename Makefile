@@ -1,9 +1,9 @@
 GO ?= go
 PYTHON ?= python3
 
-.PHONY: check fmt-check modules-check architecture-check file-size-check vet lint staticcheck govulncheck test test-quality build
+.PHONY: check fmt-check modules-check architecture-check file-size-check vet lint staticcheck govulncheck browser-test test test-quality build
 
-check: fmt-check modules-check architecture-check file-size-check vet lint staticcheck govulncheck test-quality build
+check: fmt-check modules-check architecture-check file-size-check vet lint staticcheck govulncheck browser-test test-quality build
 
 fmt-check:
 	@files="$$(find . -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l)"; \
@@ -20,6 +20,9 @@ architecture-check:
 
 file-size-check:
 	$(PYTHON) scripts/check_go_file_size.py
+
+browser-test:
+	$(PYTHON) -m unittest discover -s browser/tests -t browser
 
 vet:
 	$(GO) vet ./...

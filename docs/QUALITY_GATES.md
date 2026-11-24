@@ -24,6 +24,8 @@ The target fails on:
 - known vulnerabilities detected by pinned `govulncheck`;
 - fresh race-enabled test failures and critical-package coverage drops
   (`scripts/check_test_quality.py` runs `-count=1`);
+- failures in the Python browser-worker protocol and session-isolation tests
+  (`make browser-test`; standard library only, no browser launch);
 - build failures.
 
 Pull requests and pushes to the primary branch must pass this workflow. Keep

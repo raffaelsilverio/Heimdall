@@ -14,7 +14,8 @@ make check
 
 It checks formatting, module tidiness, package boundaries, Go file-size limits,
 `go vet`, complexity/duplication/error-handling linters, Staticcheck,
-`govulncheck`, race-enabled tests with critical-package coverage floors, and
+`govulncheck`, race-enabled tests with critical-package coverage floors,
+the Python browser-worker protocol/session tests (no browser launch), and
 buildability. See
 [docs/QUALITY_GATES.md](docs/QUALITY_GATES.md) for architecture conventions,
 the legacy large-file baseline, and the staged refactoring policy.
@@ -349,6 +350,30 @@ heimdall memory restore <program-id> <memory-id>
 ```
 
 Use `--content-stdin` instead of `--content` for sensitive notes so their body does not appear in shell history. This increment is local SQLite/FTS only: no vector store or automatic LLM call. Notes are never injected into `run`; `agent propose` can include a bounded, freshness-filtered briefing only with the explicit `--send-context --include-memory` opt-ins. Memory is advisory and never grants authorization. Older scope/source provenance is flagged when displayed or searched and excluded from planner context.
+
+## Browser worker
+
+The browser automation boundary is a separate Python worker that must bind
+`127.0.0.1` and authenticate every request with `HEIMDALL_BROWSER_TOKEN`:
+
+```sh
+cd browser
+export HEIMDALL_BROWSER_TOKEN="$(openssl rand -hex 32)"
+python3 -m heimdall_browser --port 8090 --max-sessions 8
+
+heimdall browser health --url http://127.0.0.1:8090 [--json]
+```
+
+The worker protocol carries only session metadata: program id, test account id,
+scope hash, policy revision, and timestamps. It never returns or logs cookies,
+tokens, storage state, or credentials; it rejects non-loopback bindings, query
+strings, duplicate JSON keys, chunked bodies, oversized bodies, and unknown
+fields. One live session exists per (program, test account) pair, and the worker
+caps concurrent sessions. Playwright/Chromium is not integrated yet, so the
+default driver fails closed with `driver_unavailable`; the Go client refuses
+non-loopback URLs, does not follow redirects, and verifies that the worker echoes
+the exact requested identity. `browser/README.md` documents the protocol and its
+security invariants.
 
 ## Current scope
 
