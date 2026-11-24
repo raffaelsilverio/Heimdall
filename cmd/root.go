@@ -42,7 +42,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().String("log-format", "", "Log format: text or json (default: text)")
 	root.PersistentFlags().Duration("request-timeout", 0, "Provider request timeout (default: 60s)")
 	root.PersistentFlags().Int("context-max-bytes", 0, "Maximum bytes of conversation context sent to a model (default: 262144)")
-	root.AddCommand(newRunCommand(), newProgramCommand(), newScheduleCommand(), newDaemonCommand(), newAgentCommand(), newChangesCommand(), newArtifactsCommand(), newToolsCommand(), newSessionCommand(), newMemoryCommand())
+	root.AddCommand(newRunCommand(), newProgramCommand(), newScheduleCommand(), newDaemonCommand(), newAgentCommand(), newChangesCommand(), newArtifactsCommand(), newToolsCommand(), newSessionCommand(), newMemoryCommand(), newKillSwitchCommand())
 	return root
 }
 

@@ -133,6 +133,8 @@ Cada request deve ser debitado **antes** do envio, e ficar ligado a policy revis
 
 Um crash nunca pode repetir silenciosamente um efeito externo incerto. A repetição exige decisão explícita do operador.
 
+Além dos budgets e quotas, existe um kill switch global e durável, independente de qualquer programa ou policy. Engatá-lo exige operador e motivo, fica auditado com uma revisão monotónica e interrompe criação, reserva, início e accounting de ações, o lease de ciclos adaptativos e o claim de runs agendados; runs já em lease falham a revalidação just-in-time. Soltá-lo também exige operador e motivo, e nunca acontece implicitamente por ausência de estado.
+
 ## Consentimento e limites operacionais
 
 - O consentimento para ciclos autónomos é persistente, revisto e específico por programa.

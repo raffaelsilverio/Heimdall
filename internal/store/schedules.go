@@ -188,22 +188,21 @@ func (s *Store) ListStageSchedules(ctx context.Context, programID string) ([]Sta
 
 func (s *Store) ClaimDueSchedules(ctx context.Context, now time.Time, leaseDuration time.Duration) ([]DueJob, error) {
 	now = now.UTC()
-	if leaseDuration <= 0 {
-		leaseDuration = 2 * time.Hour
+	engaged, err := killSwitchEngaged(ctx, s.db)
+	if err != nil {
+		return nil, fmt.Errorf("read global kill switch before schedule claim: %w", err)
 	}
+	if engaged {
+		return nil, nil
+	}
+	leaseDuration = scheduleClaimLease(leaseDuration)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin schedule claim: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE programs SET status = ?, updated_at = ?
-		WHERE status = ? AND EXISTS (SELECT 1 FROM authorizations a WHERE a.program_id = programs.id AND a.replaced_at IS NULL AND a.expires_at_ns <= ?)`,
-		assessment.ProgramPaused, now.Unix(), assessment.ProgramActive, now.UnixNano()); err != nil {
-		return nil, fmt.Errorf("pause expired programs: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE stage_schedules SET enabled = 0, lease_until = NULL
-		WHERE program_id IN (SELECT program_id FROM authorizations WHERE replaced_at IS NULL AND expires_at_ns <= ?)`, now.UnixNano()); err != nil {
-		return nil, fmt.Errorf("disable expired schedules: %w", err)
+	if err := pauseExpiredSchedules(ctx, tx, now); err != nil {
+		return nil, err
 	}
 
 	rows, err := tx.QueryContext(ctx, `SELECT program_id, stage, cron_expression, timezone, next_run_at,
@@ -326,4 +325,24 @@ func getProgramAndAuthorization(ctx context.Context, tx *sql.Tx, id string) (ass
 	program.CreatedAt = time.Unix(createdAt, 0).UTC()
 	program.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return program, authorizationID, nil
+}
+
+func scheduleClaimLease(leaseDuration time.Duration) time.Duration {
+	if leaseDuration <= 0 {
+		return 2 * time.Hour
+	}
+	return leaseDuration
+}
+
+func pauseExpiredSchedules(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE programs SET status = ?, updated_at = ?
+		WHERE status = ? AND EXISTS (SELECT 1 FROM authorizations a WHERE a.program_id = programs.id AND a.replaced_at IS NULL AND a.expires_at_ns <= ?)`,
+		assessment.ProgramPaused, now.Unix(), assessment.ProgramActive, now.UnixNano()); err != nil {
+		return fmt.Errorf("pause expired programs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE stage_schedules SET enabled = 0, lease_until = NULL
+		WHERE program_id IN (SELECT program_id FROM authorizations WHERE replaced_at IS NULL AND expires_at_ns <= ?)`, now.UnixNano()); err != nil {
+		return fmt.Errorf("disable expired schedules: %w", err)
+	}
+	return nil
 }

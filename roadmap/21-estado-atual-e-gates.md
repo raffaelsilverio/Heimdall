@@ -4,7 +4,7 @@ Este documento descreve o estado de implementação conhecido e os critérios de
 
 **Não é um roadmap paralelo.** O roadmap oficial está em `17-roadmap-de-fases.md`; este ficheiro existe para que as fases não repitam trabalho já feito e para que as fronteiras de segurança não se percam.
 
-**Última revisão do estado:** 2026-11-22.
+**Última revisão do estado:** 2026-11-24.
 
 ## Modelo de operação
 
@@ -37,6 +37,7 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - `agent propose` envia contexto ao modelo apenas com `--send-context`; memória exige também `--include-memory`.
 - Briefings de memória limitados em `run`, `agent propose` e triagem, sempre same-program e freshness-filtered.
 - Ledger durável de action runs, reservas idempotentes, budgets de ação/request, revalidação JIT, accounting por tentativa HTTP, recuperação `uncertain`, revisão auditada e resultado estruturado.
+- Kill switch global e durável (`system_kill_switch`), independente de programa ou policy: requer operador e motivo, incrementa uma revisão auditável e é idempotente. Enquanto engatado, `CreateAgentActionRun`, `ReserveAgentAction`, `StartAgentAction` e `ConsumeAgentActionRequest` falham com `ErrKillSwitchEngaged`; `ClaimAgentCycleJobs` e `ClaimDueSchedules` não reclamam trabalho; `ValidateRunAuthorization` recusa runs agendados já em lease. A CLI expõe `kill-switch status|engage|release` e uma linha ausente é erro, nunca release implícito.
 - Dois adapters agentic nativos, ambos sob `native_in_process_metered`: `native_http_probe` faz uma requisição `HEAD` por alvo, não segue redirects e não recolhe corpos; `native_tls_probe` faz um handshake TLS por alvo HTTPS e regista apenas metadados do certificado, sem pedido HTTP nem corpo. O executor selecciona o adapter pelo campo `tool` da proposta (`native_http_probe` quando omitido).
 - `agent execute` executa um plano explícito sequencial; `agent cycle` faz planeamento adaptativo síncrono, uma proposta por chamada do modelo, limitado por steps/budgets e com opt-ins separados para egress e requests ativos.
 - Consentimento persistente e revisto por programa para ciclos futuros; `agent_cycle_jobs` e worker no daemon processam apenas eventos materiais **novos** criados enquanto o consentimento está habilitado. Há quotas UTC de ciclos e requests reservados, leases e falha fechada sem replay automático.
@@ -78,7 +79,7 @@ Nenhuma fase é considerada concluída sem provar:
 
 | Área | Gate |
 |---|---|
-| Autorização e scope | Zero request quando a autorização expirou, o programa pausou, o scope/source mudou, a revisão está pendente, o consentimento expirou/revogou ou o budget acabou |
+| Autorização e scope | Zero request quando a autorização expirou, o programa pausou, o scope/source mudou, a revisão está pendente, o consentimento expirou/revogou, o budget acabou ou o kill switch está engatado |
 | Memória | Zero cross-program/cross-workspace em fila, prompt, busca, artefacto e exportação |
 | Execução | Cada request ligado a policy revision, programa, scope, run, action e adapter |
 | Findings | `candidate`, `reproduced` e `validated` são estados distintos e auditáveis; o LLM não inventa evidência |

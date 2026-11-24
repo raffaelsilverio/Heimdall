@@ -35,15 +35,20 @@ type ChangeEvent struct {
 func (s *Store) ValidateRunAuthorization(ctx context.Context, runID string, now time.Time) error {
 	var status, runAuthorizationID, currentAuthorizationID, runScopeHash, currentScopeHash string
 	var expiresAtNS int64
-	err := s.db.QueryRowContext(ctx, `SELECT p.status, r.authorization_id, a.id, r.scope_hash, p.scope_hash, a.expires_at_ns
+	var killSwitch int
+	err := s.db.QueryRowContext(ctx, `SELECT p.status, r.authorization_id, a.id, r.scope_hash, p.scope_hash, a.expires_at_ns, ks.engaged
 		FROM runs r JOIN programs p ON p.id = r.program_id
 		JOIN authorizations a ON a.program_id = p.id AND a.replaced_at IS NULL
-		WHERE r.id = ? AND r.status = 'running'`, runID).Scan(&status, &runAuthorizationID, &currentAuthorizationID, &runScopeHash, &currentScopeHash, &expiresAtNS)
+		JOIN system_kill_switch ks ON ks.id = 1
+		WHERE r.id = ? AND r.status = 'running'`, runID).Scan(&status, &runAuthorizationID, &currentAuthorizationID, &runScopeHash, &currentScopeHash, &expiresAtNS, &killSwitch)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("run %q is no longer active", runID)
 		}
 		return fmt.Errorf("validate run authorization: %w", err)
+	}
+	if killSwitch != 0 {
+		return fmt.Errorf("%w; scheduled recon may not send requests", ErrKillSwitchEngaged)
 	}
 	if status != "active" {
 		return fmt.Errorf("program is %s", status)

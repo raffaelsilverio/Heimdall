@@ -15,13 +15,14 @@ import (
 )
 
 type agentExecutionSnapshot struct {
-	ProgramStatus   string
-	ScopeHash       string
-	Scope           assessment.Scope
-	AuthorizationID string
-	ExpiresAt       time.Time
-	PendingReview   bool
-	Policy          contract.ProgramAgentPolicy
+	ProgramStatus     string
+	ScopeHash         string
+	Scope             assessment.Scope
+	AuthorizationID   string
+	ExpiresAt         time.Time
+	PendingReview     bool
+	KillSwitchEngaged bool
+	Policy            contract.ProgramAgentPolicy
 }
 
 type serializedAgentActionGrant struct {
@@ -54,7 +55,11 @@ func loadAgentExecutionSnapshot(ctx context.Context, queryer agentPolicyQueryRow
 	var scopeJSON string
 	var stagesJSON, classesJSON, approvalClassesJSON string
 	var policy contract.ProgramAgentPolicy
-	err := queryer.QueryRowContext(ctx, `SELECT p.status, p.scope_hash, p.scope_json, a.id, a.expires_at_ns,
+	killSwitch, err := killSwitchEngaged(ctx, queryer)
+	if err != nil {
+		return agentExecutionSnapshot{}, fmt.Errorf("load global kill switch for agent execution: %w", err)
+	}
+	err = queryer.QueryRowContext(ctx, `SELECT p.status, p.scope_hash, p.scope_json, a.id, a.expires_at_ns,
 		EXISTS(SELECT 1 FROM program_source_snapshots ps WHERE ps.program_id = p.id AND ps.status = 'pending'),
 		ap.revision, ap.allowed_stages_json, ap.allowed_classes_json, ap.approval_required_classes_json,
 		ap.max_actions_per_run, ap.max_requests_per_run, ap.max_requests_per_action, ap.max_targets_per_action
@@ -78,6 +83,7 @@ func loadAgentExecutionSnapshot(ctx context.Context, queryer agentPolicyQueryRow
 	}
 	snapshot.ExpiresAt = time.Unix(0, expiresAtNS).UTC()
 	snapshot.PendingReview = pending != 0
+	snapshot.KillSwitchEngaged = killSwitch
 	if err := json.Unmarshal([]byte(stagesJSON), &policy.AllowedStages); err != nil {
 		return agentExecutionSnapshot{}, fmt.Errorf("decode current allowed agent stages: %w", err)
 	}
@@ -96,6 +102,9 @@ func loadAgentExecutionSnapshot(ctx context.Context, queryer agentPolicyQueryRow
 }
 
 func validateAgentExecutionSnapshot(snapshot agentExecutionSnapshot, now time.Time) error {
+	if snapshot.KillSwitchEngaged {
+		return fmt.Errorf("%w; no agent action may start or send a request", ErrKillSwitchEngaged)
+	}
 	if snapshot.ProgramStatus != "active" {
 		return fmt.Errorf("program is %s", snapshot.ProgramStatus)
 	}

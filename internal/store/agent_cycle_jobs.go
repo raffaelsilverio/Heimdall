@@ -67,14 +67,16 @@ func (s *Store) ClaimAgentCycleJobs(ctx context.Context, now time.Time, leaseDur
 	if _, err := s.RecoverExpiredAgentActions(ctx, now); err != nil {
 		return nil, fmt.Errorf("recover expired agent actions before cycle claim: %w", err)
 	}
-	if leaseDuration <= 0 {
-		leaseDuration = 2 * time.Minute
+	engaged, err := killSwitchEngaged(ctx, s.db)
+	if err != nil {
+		return nil, fmt.Errorf("read global kill switch before cycle claim: %w", err)
 	}
-	if leaseDuration > 10*time.Minute {
-		return nil, errors.New("agent cycle lease cannot exceed 10 minutes")
+	if engaged {
+		return nil, nil
 	}
-	if limit <= 0 || limit > 10 {
-		limit = 1
+	leaseDuration, limit, err = normalizeAgentCycleClaim(leaseDuration, limit)
+	if err != nil {
+		return nil, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -214,6 +216,19 @@ func (s *Store) ClaimAgentCycleJobs(ctx context.Context, now time.Time, leaseDur
 		return nil, fmt.Errorf("commit agent cycle leases: %w", err)
 	}
 	return leases, nil
+}
+
+func normalizeAgentCycleClaim(leaseDuration time.Duration, limit int) (time.Duration, int, error) {
+	if leaseDuration <= 0 {
+		leaseDuration = 2 * time.Minute
+	}
+	if leaseDuration > 10*time.Minute {
+		return 0, 0, errors.New("agent cycle lease cannot exceed 10 minutes")
+	}
+	if limit <= 0 || limit > 10 {
+		limit = 1
+	}
+	return leaseDuration, limit, nil
 }
 
 func loadAgentCycleCandidate(ctx context.Context, tx *sql.Tx, taskID string, now time.Time) (AgentCycleLease, bool, error) {
