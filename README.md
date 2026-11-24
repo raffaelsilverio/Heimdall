@@ -202,6 +202,25 @@ heimdall program policy set <program-id> \
 heimdall program policy reset <program-id>
 ```
 
+When a class needs human sign-off, add it to both the allowlist and the approval rule. Approvals are exact, single-use and expire:
+
+```sh
+heimdall program policy set <program-id> \
+  --allow-stage web --allow-class safe_active \
+  --require-approval-class safe_active \
+  --max-actions-per-run 2 --max-requests-per-run 100 \
+  --max-requests-per-action 20 --max-targets-per-action 10
+
+# Same JSON as `agent plan`; creates requests only for REQUIRE_APPROVAL actions.
+heimdall agent approvals request <program-id> --by operator \
+  --expires-at 2026-11-23T12:00:00Z < plan.json
+heimdall agent approvals list <program-id>
+heimdall agent approvals approve <program-id> <approval-id> --by reviewer --note 'scope and budget reviewed'
+heimdall agent approvals deny <program-id> <approval-id> --by reviewer --note 'not justified'
+```
+
+Every decision is explicit: `ALLOW`, `DENY` or `REQUIRE_APPROVAL`. Impact is derived from the reviewed action class (`passive`→`passive`, `safe_active`→`active`, `sensitive`→`high`). An approval binds the program, scope hash, policy revision, stage, tool, class, impact, canonical targets and request budget into a SHA-256 fingerprint; it never authorizes a class or a program in general. Pending, expired, consumed, denied, ambiguous or mismatched approvals fail closed, and the approval is consumed atomically with the budget reservation before the request is sent. `agent plan` and `agent propose` expose `decision`, `impact`, `approval_fingerprint` and `approval_subject`, and remove every `authorized_candidate` unless the whole plan is `ALLOW`.
+
 Outbound HTTP requests use a separate per-program request profile. It is applied by one middleware to native HTTP probes and to every stage that sends HTTP (web, crawl, fuzzing and Nuclei); the TLS handshake sends no HTTP headers:
 
 ```sh

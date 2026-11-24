@@ -85,12 +85,7 @@ func (s *Store) ReserveAgentAction(ctx context.Context, input ReserveAgentAction
 		return AgentActionReservation{}, false, errors.New("agent action stage is unregistered or its action class does not match")
 	}
 	var grant serializedAgentActionGrant
-	if err := json.Unmarshal(input.ProposalJSON, &grant); err != nil || grant.ProgramID != input.ProgramID ||
-		grant.ScopeHash != input.ScopeHash || grant.PolicyRevision != input.PolicyRevision || grant.Stage != input.Stage ||
-		grant.Class != input.ActionClass || len(grant.Targets) != input.TargetCount ||
-		grant.RequestBudget != input.RequestBudget || !grant.ValidUntil.Equal(input.GrantValidUntil) || grant.Limits != input.Limits ||
-		grant.Proposal.Stage != input.Stage || grant.Proposal.ScopeHash != input.ScopeHash ||
-		grant.Proposal.EstimatedCalls != input.RequestBudget {
+	if err := json.Unmarshal(input.ProposalJSON, &grant); err != nil || !agentReservationMatchesGrant(input, grant) {
 		return AgentActionReservation{}, false, errors.New("serialized authorization grant does not match reservation fields")
 	}
 	now = now.UTC().Truncate(time.Second)
@@ -119,11 +114,7 @@ func (s *Store) ReserveAgentAction(ctx context.Context, input ReserveAgentAction
 	if err != nil {
 		return AgentActionReservation{}, false, err
 	}
-	if input.ScopeHash != run.ScopeHash || input.PolicyRevision != run.PolicyRevision ||
-		input.Limits != limits || input.RequestBudget > run.MaxRequestsPerAction ||
-		input.RequestBudget > snapshot.Policy.MaxRequestsPerAction || input.TargetCount > run.MaxTargetsPerAction ||
-		input.TargetCount > snapshot.Policy.MaxTargetsPerAction || input.TargetCount > limits.MaxTargets ||
-		!input.GrantValidUntil.After(now) || input.GrantValidUntil.After(snapshot.ExpiresAt) {
+	if !agentReservationMatchesSnapshot(run, snapshot, input, limits, now) {
 		return AgentActionReservation{}, false, errors.New("authorized action no longer matches the run scope, policy, limits, or budgets")
 	}
 	if err := validateSerializedAgentActionGrant(snapshot.Scope, run, snapshot.Policy, limits, grant); err != nil {
@@ -140,6 +131,10 @@ func (s *Store) ReserveAgentAction(ctx context.Context, input ReserveAgentAction
 		return existing, false, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return AgentActionReservation{}, false, fmt.Errorf("load idempotent action reservation: %w", err)
+	}
+
+	if err := consumeAgentApprovalForGrant(ctx, tx, grant, now); err != nil {
+		return AgentActionReservation{}, false, err
 	}
 
 	update, err := tx.ExecContext(ctx, `UPDATE agent_action_runs

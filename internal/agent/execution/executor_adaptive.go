@@ -63,7 +63,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 			return Result{}, err
 		}
 	}
-	_, initialContext, err := e.loadPolicyContext(ctx, programID)
+	_, initialContext, err := e.loadPolicyContext(ctx, programID, now)
 	if err != nil {
 		return Result{}, err
 	}
@@ -99,7 +99,7 @@ func (e Executor) runAdaptive(ctx context.Context, programID, actionRunID string
 		if err := ctx.Err(); err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
-		currentProgram, currentContext, err := e.loadPolicyContext(ctx, programID)
+		currentProgram, currentContext, err := e.loadPolicyContext(ctx, programID, now)
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}

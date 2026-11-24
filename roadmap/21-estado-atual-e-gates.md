@@ -4,7 +4,7 @@ Este documento descreve o estado de implementação conhecido e os critérios de
 
 **Não é um roadmap paralelo.** O roadmap oficial está em `17-roadmap-de-fases.md`; este ficheiro existe para que as fases não repitam trabalho já feito e para que as fronteiras de segurança não se percam.
 
-**Última revisão do estado:** 2026-11-20.
+**Última revisão do estado:** 2026-11-22.
 
 ## Modelo de operação
 
@@ -32,6 +32,8 @@ O daemon é o processo principal; a CLI serve para operação e o Discord para s
 - Resumos locais de runs completos sem evento material e captura automática de até 20 resultados Nuclei completos como `finding_candidate`. Nenhum é promovido automaticamente a achado validado.
 - Triagem de eventos separada da fila de ciclos adaptativos, com leases e handoffs determinísticos.
 - Política de ação por programa deny-by-default; `agent plan` valida JSON sem executar.
+- Decisões de policy explícitas (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`) com nível de impacto (`passive`/`low`/`active`/`high`). Classes exigidas por `ApprovalRequiredClasses` têm de estar também em `AllowedClasses`. Apenas `ALLOW` produz um grant executável.
+- Aprovações humanas são single-use e vinculadas por fingerprint SHA-256 ao programa, scope, revisão de policy, estágio, ferramenta, classe, impacto, targets canónicos e budget de requests. Pedidos pendentes, expirados, consumidos, negados, ambíguos ou com fingerprint divergente falham fechado. `agent approvals request` lê o mesmo JSON de `agent plan`, cria pedidos apenas para `REQUIRE_APPROVAL` e nunca executa ferramentas; `approve`/`deny` revalidam a policy atual e o consumo acontece na mesma transação da reserva de budget (`ReserveAgentAction`), com nova validação em `StartAgentAction`.
 - `agent propose` envia contexto ao modelo apenas com `--send-context`; memória exige também `--include-memory`.
 - Briefings de memória limitados em `run`, `agent propose` e triagem, sempre same-program e freshness-filtered.
 - Ledger durável de action runs, reservas idempotentes, budgets de ação/request, revalidação JIT, accounting por tentativa HTTP, recuperação `uncertain`, revisão auditada e resultado estruturado.

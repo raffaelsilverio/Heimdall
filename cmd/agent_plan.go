@@ -152,7 +152,12 @@ func loadActionPolicyContext(cmd *cobra.Command, programID string) (agent.Action
 			enabledSchedules[schedule.Stage] = schedule.Limits
 		}
 	}
+	approvals, err := database.ListUsableAgentApprovals(cmd.Context(), program.ID, nowUTC())
+	if err != nil {
+		return agent.ActionPolicyContext{}, err
+	}
 	return agent.ActionPolicyContext{
-		Program: program, SourceReviewPending: pendingReview, EnabledSchedules: enabledSchedules, Policy: policy,
+		Program: program, SourceReviewPending: pendingReview, EnabledSchedules: enabledSchedules,
+		Approvals: approvals, Policy: policy,
 	}, nil
 }

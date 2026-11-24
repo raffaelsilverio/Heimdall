@@ -36,10 +36,14 @@ type PlanDraft struct {
 }
 
 type PlanDecision struct {
-	Proposal            ActionProposal    `json:"proposal"`
-	PolicyPassed        bool              `json:"policy_passed"`
-	Reason              string            `json:"reason,omitempty"`
-	AuthorizedCandidate *AuthorizedAction `json:"authorized_candidate,omitempty"`
+	Proposal            ActionProposal            `json:"proposal"`
+	Decision            contract.Decision         `json:"decision"`
+	Impact              contract.ActionImpact     `json:"impact,omitempty"`
+	ApprovalFingerprint string                    `json:"approval_fingerprint,omitempty"`
+	ApprovalSubject     *contract.ApprovalSubject `json:"approval_subject,omitempty"`
+	PolicyPassed        bool                      `json:"policy_passed"`
+	Reason              string                    `json:"reason,omitempty"`
+	AuthorizedCandidate *AuthorizedAction         `json:"authorized_candidate,omitempty"`
 }
 
 // PolicyAwarePlanner validates a proposed action sequence and returns
@@ -372,16 +376,15 @@ func (p PolicyAwarePlanner) ValidatePlan(ctx context.Context, policyContext Acti
 	working := policyContext
 	allAccepted := true
 	for _, proposal := range proposals {
-		grant, err := p.Policy.Authorize(ctx, working, proposal, now)
-		decision := PlanDecision{Proposal: proposal}
+		decision, allowed, err := p.evaluatePlanProposal(ctx, working, proposal, now)
 		if err != nil {
-			decision.Reason = err.Error()
-			allAccepted = false
-		} else {
-			decision.PolicyPassed = true
-			decision.AuthorizedCandidate = &grant
+			return PlanValidation{}, err
+		}
+		if allowed {
 			working.ActionsUsed++
 			working.RequestsUsed += proposal.EstimatedCalls
+		} else {
+			allAccepted = false
 		}
 		result.Decisions = append(result.Decisions, decision)
 		if ctx.Err() != nil {
@@ -396,6 +399,42 @@ func (p PolicyAwarePlanner) ValidatePlan(ctx context.Context, policyContext Acti
 		}
 	}
 	return result, nil
+}
+
+func (p PolicyAwarePlanner) evaluatePlanProposal(ctx context.Context, policyContext ActionPolicyContext,
+	proposal ActionProposal, now time.Time) (PlanDecision, bool, error) {
+	evaluated, err := p.Policy.Evaluate(ctx, policyContext, proposal, now)
+	if err != nil {
+		return PlanDecision{}, false, err
+	}
+	decision := PlanDecision{
+		Proposal: proposal, Decision: evaluated.Decision, Impact: evaluated.Impact,
+		ApprovalFingerprint: evaluated.ApprovalFingerprint,
+	}
+	switch evaluated.Decision {
+	case contract.DecisionAllow:
+		if evaluated.Candidate == nil {
+			return PlanDecision{}, false, errors.New("policy returned ALLOW without an authorized action")
+		}
+		decision.PolicyPassed = true
+		decision.AuthorizedCandidate = evaluated.Candidate
+		return decision, true, nil
+	case contract.DecisionRequireApproval:
+		decision.Reason = evaluated.Reason
+		if evaluated.Candidate != nil {
+			subject, err := evaluated.Candidate.ApprovalSubject()
+			if err != nil {
+				return PlanDecision{}, false, err
+			}
+			decision.ApprovalSubject = &subject
+		}
+		return decision, false, nil
+	case contract.DecisionDeny:
+		decision.Reason = evaluated.Reason
+		return decision, false, nil
+	default:
+		return PlanDecision{}, false, fmt.Errorf("policy returned unknown decision %q", evaluated.Decision)
+	}
 }
 
 func (p PlanValidation) Summary() string {

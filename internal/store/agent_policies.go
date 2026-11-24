@@ -61,32 +61,43 @@ func (s *Store) SetProgramAgentPolicy(ctx context.Context, programID string, inp
 	}
 
 	normalized.Revision = current.Revision + 1
-	stagesJSON, err := json.Marshal(normalized.AllowedStages)
-	if err != nil {
-		return contract.ProgramAgentPolicy{}, fmt.Errorf("encode allowed agent stages: %w", err)
-	}
-	classesJSON, err := json.Marshal(normalized.AllowedClasses)
-	if err != nil {
-		return contract.ProgramAgentPolicy{}, fmt.Errorf("encode allowed agent classes: %w", err)
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE program_agent_policies SET revision = ?, allowed_stages_json = ?,
-		allowed_classes_json = ?, max_actions_per_run = ?, max_requests_per_run = ?, max_requests_per_action = ?,
-		max_targets_per_action = ?, updated_at = ? WHERE program_id = ?`, normalized.Revision,
-		string(stagesJSON), string(classesJSON), normalized.MaxActionsPerRun, normalized.MaxRequestsPerRun,
-		normalized.MaxRequestsPerAction, normalized.MaxTargetsPerAction, now.UTC().Unix(), programID)
-	if err != nil {
-		return contract.ProgramAgentPolicy{}, fmt.Errorf("save program agent policy: %w", err)
-	}
-	if count, err := result.RowsAffected(); err != nil || count != 1 {
-		if err != nil {
-			return contract.ProgramAgentPolicy{}, fmt.Errorf("verify saved program agent policy: %w", err)
-		}
-		return contract.ProgramAgentPolicy{}, fmt.Errorf("program %q not found", programID)
+	if err := persistProgramAgentPolicy(ctx, tx, programID, normalized, now); err != nil {
+		return contract.ProgramAgentPolicy{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return contract.ProgramAgentPolicy{}, fmt.Errorf("commit program agent policy: %w", err)
 	}
 	return normalized, nil
+}
+
+func persistProgramAgentPolicy(ctx context.Context, tx *sql.Tx, programID string, policy contract.ProgramAgentPolicy, now time.Time) error {
+	stagesJSON, err := json.Marshal(policy.AllowedStages)
+	if err != nil {
+		return fmt.Errorf("encode allowed agent stages: %w", err)
+	}
+	classesJSON, err := json.Marshal(policy.AllowedClasses)
+	if err != nil {
+		return fmt.Errorf("encode allowed agent classes: %w", err)
+	}
+	approvalClassesJSON, err := json.Marshal(policy.ApprovalRequiredClasses)
+	if err != nil {
+		return fmt.Errorf("encode approval-required agent classes: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE program_agent_policies SET revision = ?, allowed_stages_json = ?,
+		allowed_classes_json = ?, approval_required_classes_json = ?, max_actions_per_run = ?, max_requests_per_run = ?,
+		max_requests_per_action = ?, max_targets_per_action = ?, updated_at = ? WHERE program_id = ?`, policy.Revision,
+		string(stagesJSON), string(classesJSON), string(approvalClassesJSON), policy.MaxActionsPerRun,
+		policy.MaxRequestsPerRun, policy.MaxRequestsPerAction, policy.MaxTargetsPerAction,
+		now.UTC().Unix(), programID)
+	if err != nil {
+		return fmt.Errorf("save program agent policy: %w", err)
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("verify saved program agent policy: %w", err)
+	} else if count != 1 {
+		return fmt.Errorf("program %q not found", programID)
+	}
+	return nil
 }
 
 func (s *Store) HasPendingProgramSourceReview(ctx context.Context, programID string) (bool, error) {
@@ -107,11 +118,11 @@ type agentPolicyQueryRower interface {
 
 func loadProgramAgentPolicy(ctx context.Context, queryer agentPolicyQueryRower, programID string) (contract.ProgramAgentPolicy, error) {
 	var policy contract.ProgramAgentPolicy
-	var stagesJSON, classesJSON string
+	var stagesJSON, classesJSON, approvalClassesJSON string
 	if err := queryer.QueryRowContext(ctx, `SELECT revision, allowed_stages_json, allowed_classes_json,
-		max_actions_per_run, max_requests_per_run, max_requests_per_action, max_targets_per_action
+		approval_required_classes_json, max_actions_per_run, max_requests_per_run, max_requests_per_action, max_targets_per_action
 		FROM program_agent_policies WHERE program_id = ?`, programID).Scan(
-		&policy.Revision, &stagesJSON, &classesJSON, &policy.MaxActionsPerRun, &policy.MaxRequestsPerRun,
+		&policy.Revision, &stagesJSON, &classesJSON, &approvalClassesJSON, &policy.MaxActionsPerRun, &policy.MaxRequestsPerRun,
 		&policy.MaxRequestsPerAction, &policy.MaxTargetsPerAction); err != nil {
 		return contract.ProgramAgentPolicy{}, err
 	}
@@ -120,6 +131,9 @@ func loadProgramAgentPolicy(ctx context.Context, queryer agentPolicyQueryRower, 
 	}
 	if err := json.Unmarshal([]byte(classesJSON), &policy.AllowedClasses); err != nil {
 		return contract.ProgramAgentPolicy{}, fmt.Errorf("decode allowed action classes: %w", err)
+	}
+	if err := json.Unmarshal([]byte(approvalClassesJSON), &policy.ApprovalRequiredClasses); err != nil {
+		return contract.ProgramAgentPolicy{}, fmt.Errorf("decode approval-required action classes: %w", err)
 	}
 	normalized, err := contract.NormalizeProgramAgentPolicy(policy)
 	if err != nil {
@@ -131,7 +145,8 @@ func loadProgramAgentPolicy(ctx context.Context, queryer agentPolicyQueryRower, 
 func sameAgentPolicy(left, right contract.ProgramAgentPolicy) bool {
 	if left.MaxActionsPerRun != right.MaxActionsPerRun || left.MaxRequestsPerRun != right.MaxRequestsPerRun ||
 		left.MaxRequestsPerAction != right.MaxRequestsPerAction || left.MaxTargetsPerAction != right.MaxTargetsPerAction ||
-		len(left.AllowedStages) != len(right.AllowedStages) || len(left.AllowedClasses) != len(right.AllowedClasses) {
+		len(left.AllowedStages) != len(right.AllowedStages) || len(left.AllowedClasses) != len(right.AllowedClasses) ||
+		len(left.ApprovalRequiredClasses) != len(right.ApprovalRequiredClasses) {
 		return false
 	}
 	for index := range left.AllowedStages {
@@ -141,6 +156,11 @@ func sameAgentPolicy(left, right contract.ProgramAgentPolicy) bool {
 	}
 	for index := range left.AllowedClasses {
 		if left.AllowedClasses[index] != right.AllowedClasses[index] {
+			return false
+		}
+	}
+	for index := range left.ApprovalRequiredClasses {
+		if left.ApprovalRequiredClasses[index] != right.ApprovalRequiredClasses[index] {
 			return false
 		}
 	}

@@ -13,7 +13,7 @@ import (
 
 func newAgentCommand() *cobra.Command {
 	command := &cobra.Command{Use: "agent", Short: "Process supervised agent-event work"}
-	command.AddCommand(newAgentTriageCommand(), newAgentTasksCommand(), newAgentRetryTriageCommand(), newAgentPlanCommand(), newAgentProposeCommand(), newAgentExecuteCommand(), newAgentCycleCommand(), newAgentCycleJobsCommand(), newAgentCycleJobReviewCommand(), newAgentActionRunsCommand(), newAgentActionRunShowCommand(), newAgentActionReviewCommand(), newAgentToolsCommand())
+	command.AddCommand(newAgentTriageCommand(), newAgentTasksCommand(), newAgentRetryTriageCommand(), newAgentPlanCommand(), newAgentProposeCommand(), newAgentExecuteCommand(), newAgentCycleCommand(), newAgentCycleJobsCommand(), newAgentCycleJobReviewCommand(), newAgentActionRunsCommand(), newAgentActionRunShowCommand(), newAgentActionReviewCommand(), newAgentToolsCommand(), newAgentApprovalsCommand())
 	return command
 }
 

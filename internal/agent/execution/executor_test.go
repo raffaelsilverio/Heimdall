@@ -185,6 +185,79 @@ func TestExecutorRunsPrevalidatedActionsSequentiallyWithinOneRunBudget(t *testin
 	}
 }
 
+func TestExecutorRequiresAndConsumesScopedApproval(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	database, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "heimdall.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	now := time.Now().UTC().Truncate(time.Second)
+	program := createExecutableProgram(t, database, now, server.URL)
+	policy, err := database.SetProgramAgentPolicy(context.Background(), program.ID, contract.ProgramAgentPolicy{
+		AllowedStages: []string{recon.StageWeb}, AllowedClasses: []contract.ActionClass{contract.ActionSafeActive},
+		ApprovalRequiredClasses: []contract.ActionClass{contract.ActionSafeActive},
+		MaxActionsPerRun:        1, MaxRequestsPerRun: 1, MaxRequestsPerAction: 1, MaxTargetsPerAction: 1,
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal := agent.ActionProposal{
+		Stage: recon.StageWeb, ScopeHash: program.ScopeHash, Targets: []string{server.URL + "/approval"},
+		EstimatedCalls: 1, Rationale: "One approved probe",
+	}
+	executor := Executor{Store: database, Registry: recon.NewDefaultAgentActionRegistry(), Policy: agent.ScopeActionPolicy{}}
+	if _, err := executor.ExecuteOne(context.Background(), program.ID, uuid.NewString(), proposal, now.Add(2*time.Second)); err == nil ||
+		!strings.Contains(err.Error(), "requires a scoped approval") {
+		t.Fatalf("unapproved action error = %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatal("unapproved action sent a request")
+	}
+	runs, err := database.ListAgentActionRuns(context.Background(), program.ID, 10)
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("unapproved action created a run: runs=%+v err=%v", runs, err)
+	}
+
+	subject, err := contract.NewApprovalSubject(program.ID, program.ScopeHash, policy.Revision, recon.StageWeb,
+		recon.AgentHTTPProbeID, contract.ActionSafeActive, proposal.Targets, proposal.EstimatedCalls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval, err := database.CreateAgentApprovalRequest(context.Background(), program.ID, subject, "operator",
+		now.Add(time.Hour), now.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DecideAgentApproval(context.Background(), program.ID, approval.ID, true, "reviewer",
+		"exact target and budget reviewed", now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := executor.ExecuteOne(context.Background(), program.ID, uuid.NewString(), proposal, now.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests.Load() != 1 || result.Status != "completed" || len(result.Actions) != 1 {
+		t.Fatalf("approved action did not run exactly once: requests=%d result=%+v", requests.Load(), result)
+	}
+	consumed, err := database.GetAgentApproval(context.Background(), program.ID, approval.ID)
+	if err != nil || consumed.Status != contract.ApprovalConsumed || consumed.ConsumedAt == nil {
+		t.Fatalf("approval was not consumed: approval=%+v err=%v", consumed, err)
+	}
+	if _, err := executor.ExecuteOne(context.Background(), program.ID, uuid.NewString(), proposal, now.Add(6*time.Second)); err == nil ||
+		!strings.Contains(err.Error(), "requires a scoped approval") {
+		t.Fatalf("consumed approval was reused: %v", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("consumed approval sent another request: %d", requests.Load())
+	}
+}
+
 func TestAdaptiveCycleUsesOnlyBoundedResultsAndStopsAtModelDecision(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

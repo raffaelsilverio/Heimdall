@@ -40,7 +40,7 @@ func newProgramPolicyShowCommand() *cobra.Command {
 }
 
 func newProgramPolicySetCommand() *cobra.Command {
-	var stages, classes []string
+	var stages, classes, approvalClasses []string
 	var maxActions, maxRequests, maxRequestsPerAction, maxTargets int
 	command := &cobra.Command{
 		Use:   "set <program-id>",
@@ -57,6 +57,9 @@ func newProgramPolicySetCommand() *cobra.Command {
 			}
 			for _, class := range classes {
 				policy.AllowedClasses = append(policy.AllowedClasses, contract.ActionClass(strings.ToLower(strings.TrimSpace(class))))
+			}
+			for _, class := range approvalClasses {
+				policy.ApprovalRequiredClasses = append(policy.ApprovalRequiredClasses, contract.ActionClass(strings.ToLower(strings.TrimSpace(class))))
 			}
 			database, err := openStore(cmd)
 			if err != nil {
@@ -76,6 +79,7 @@ func newProgramPolicySetCommand() *cobra.Command {
 	}
 	command.Flags().StringSliceVar(&stages, "allow-stage", nil, "Allow an agent stage (repeatable: osint,dns,web,nmap,crawl,ffuf,nuclei)")
 	command.Flags().StringSliceVar(&classes, "allow-class", nil, "Allow an action class (repeatable: passive,safe_active,sensitive)")
+	command.Flags().StringSliceVar(&approvalClasses, "require-approval-class", nil, "Require a scoped human approval for an action class (repeatable; must also be allowed)")
 	command.Flags().IntVar(&maxActions, "max-actions-per-run", 0, "Maximum agent actions in one run")
 	command.Flags().IntVar(&maxRequests, "max-requests-per-run", 0, "Maximum request units in one run")
 	command.Flags().IntVar(&maxRequestsPerAction, "max-requests-per-action", 0, "Maximum request units in one action")
@@ -111,8 +115,8 @@ func writeProgramAgentPolicy(output interface{ Write([]byte) (int, error) }, pol
 	if _, err := fmt.Fprintln(writer, "SETTING\tVALUE"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(writer, "REVISION\t%d\nALLOWED STAGES\t%v\nALLOWED CLASSES\t%v\nMAX ACTIONS/RUN\t%d\nMAX REQUESTS/RUN\t%d\nMAX REQUESTS/ACTION\t%d\nMAX TARGETS/ACTION\t%d\n",
-		policy.Revision, policy.AllowedStages, policy.AllowedClasses, policy.MaxActionsPerRun,
+	if _, err := fmt.Fprintf(writer, "REVISION\t%d\nALLOWED STAGES\t%v\nALLOWED CLASSES\t%v\nAPPROVAL REQUIRED CLASSES\t%v\nMAX ACTIONS/RUN\t%d\nMAX REQUESTS/RUN\t%d\nMAX REQUESTS/ACTION\t%d\nMAX TARGETS/ACTION\t%d\n",
+		policy.Revision, policy.AllowedStages, policy.AllowedClasses, policy.ApprovalRequiredClasses, policy.MaxActionsPerRun,
 		policy.MaxRequestsPerRun, policy.MaxRequestsPerAction, policy.MaxTargetsPerAction); err != nil {
 		return err
 	}

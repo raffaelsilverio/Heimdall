@@ -23,13 +23,14 @@ const (
 // ProgramAgentPolicy is a trusted, versioned policy snapshot. Empty allowlists
 // and zero budgets are the deny-all default.
 type ProgramAgentPolicy struct {
-	Revision             int64
-	AllowedStages        []string
-	AllowedClasses       []ActionClass
-	MaxActionsPerRun     int
-	MaxRequestsPerRun    int
-	MaxRequestsPerAction int
-	MaxTargetsPerAction  int
+	Revision                int64
+	AllowedStages           []string
+	AllowedClasses          []ActionClass
+	ApprovalRequiredClasses []ActionClass
+	MaxActionsPerRun        int
+	MaxRequestsPerRun       int
+	MaxRequestsPerAction    int
+	MaxTargetsPerAction     int
 }
 
 func ActionClassForStage(stage string) (ActionClass, bool) {
@@ -134,29 +135,28 @@ func NormalizeProgramAgentPolicy(policy ProgramAgentPolicy) (ProgramAgentPolicy,
 	}
 	sort.Strings(stages)
 
-	classes := make([]ActionClass, 0, len(policy.AllowedClasses))
-	seenClasses := make(map[ActionClass]struct{}, len(policy.AllowedClasses))
-	for _, value := range policy.AllowedClasses {
-		class := ActionClass(strings.ToLower(strings.TrimSpace(string(value))))
-		switch class {
-		case ActionPassive, ActionSafeActive, ActionSensitive:
-		default:
-			return ProgramAgentPolicy{}, fmt.Errorf("unsupported agent action class %q", value)
-		}
-		if _, exists := seenClasses[class]; !exists {
-			seenClasses[class] = struct{}{}
-			classes = append(classes, class)
-		}
+	classes, err := normalizeActionClasses(policy.AllowedClasses)
+	if err != nil {
+		return ProgramAgentPolicy{}, err
 	}
-	sort.Slice(classes, func(i, j int) bool { return classes[i] < classes[j] })
+	seenClasses := make(map[ActionClass]struct{}, len(classes))
+	for _, class := range classes {
+		seenClasses[class] = struct{}{}
+	}
+
+	approvalClasses, err := normalizeApprovalRequiredClasses(policy.ApprovalRequiredClasses, seenClasses)
+	if err != nil {
+		return ProgramAgentPolicy{}, err
+	}
 
 	if len(stages) == 0 {
-		if len(classes) != 0 || policy.MaxActionsPerRun != 0 || policy.MaxRequestsPerRun != 0 ||
+		if len(classes) != 0 || len(approvalClasses) != 0 || policy.MaxActionsPerRun != 0 || policy.MaxRequestsPerRun != 0 ||
 			policy.MaxRequestsPerAction != 0 || policy.MaxTargetsPerAction != 0 {
-			return ProgramAgentPolicy{}, errors.New("deny-all policy must have empty allowlists and zero budgets")
+			return ProgramAgentPolicy{}, errors.New("deny-all policy must have empty allowlists, no approval classes, and zero budgets")
 		}
 		policy.AllowedStages = nil
 		policy.AllowedClasses = nil
+		policy.ApprovalRequiredClasses = nil
 		return policy, nil
 	}
 	if len(classes) == 0 {
@@ -182,5 +182,38 @@ func NormalizeProgramAgentPolicy(policy ProgramAgentPolicy) (ProgramAgentPolicy,
 	}
 	policy.AllowedStages = stages
 	policy.AllowedClasses = classes
+	policy.ApprovalRequiredClasses = approvalClasses
 	return policy, nil
+}
+
+func normalizeActionClasses(values []ActionClass) ([]ActionClass, error) {
+	classes := make([]ActionClass, 0, len(values))
+	seen := make(map[ActionClass]struct{}, len(values))
+	for _, value := range values {
+		class := ActionClass(strings.ToLower(strings.TrimSpace(string(value))))
+		switch class {
+		case ActionPassive, ActionSafeActive, ActionSensitive:
+		default:
+			return nil, fmt.Errorf("unsupported agent action class %q", value)
+		}
+		if _, exists := seen[class]; !exists {
+			seen[class] = struct{}{}
+			classes = append(classes, class)
+		}
+	}
+	sort.Slice(classes, func(i, j int) bool { return classes[i] < classes[j] })
+	return classes, nil
+}
+
+func normalizeApprovalRequiredClasses(values []ActionClass, allowed map[ActionClass]struct{}) ([]ActionClass, error) {
+	classes, err := normalizeActionClasses(values)
+	if err != nil {
+		return nil, fmt.Errorf("invalid approval-required action classes: %w", err)
+	}
+	for _, class := range classes {
+		if _, ok := allowed[class]; !ok {
+			return nil, fmt.Errorf("approval-required class %q must also be allowlisted", class)
+		}
+	}
+	return classes, nil
 }

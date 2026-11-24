@@ -112,7 +112,7 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 		e.Registry = recon.NewDefaultAgentActionRegistry()
 	}
 	now = normalizeNow(now, e.Clock)
-	_, policyContext, err := e.loadPolicyContext(ctx, programID)
+	_, policyContext, err := e.loadPolicyContext(ctx, programID, now)
 	if err != nil {
 		return Result{}, err
 	}
@@ -157,7 +157,7 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 		PolicyRevision: cycle.PolicyRevision, Status: "completed", Actions: make([]ActionResult, 0, len(proposals)),
 	}
 	for index, proposal := range proposals {
-		currentProgram, currentContext, err := e.loadPolicyContext(ctx, programID)
+		currentProgram, currentContext, err := e.loadPolicyContext(ctx, programID, now)
 		if err != nil {
 			return e.closeFailedPlan(ctx, result, programID, cycle.ID, err)
 		}
@@ -187,7 +187,7 @@ func (e Executor) ExecutePlan(ctx context.Context, programID, actionRunID string
 	return result, nil
 }
 
-func (e Executor) loadPolicyContext(ctx context.Context, programID string) (assessment.Program, agent.ActionPolicyContext, error) {
+func (e Executor) loadPolicyContext(ctx context.Context, programID string, now time.Time) (assessment.Program, agent.ActionPolicyContext, error) {
 	program, err := e.Store.GetProgram(ctx, programID)
 	if err != nil {
 		return assessment.Program{}, agent.ActionPolicyContext{}, err
@@ -204,6 +204,10 @@ func (e Executor) loadPolicyContext(ctx context.Context, programID string) (asse
 	if err != nil {
 		return assessment.Program{}, agent.ActionPolicyContext{}, err
 	}
+	approvals, err := e.Store.ListUsableAgentApprovals(ctx, programID, now)
+	if err != nil {
+		return assessment.Program{}, agent.ActionPolicyContext{}, err
+	}
 	enabledSchedules := make(map[string]recon.StageLimits)
 	for _, schedule := range schedules {
 		if schedule.Enabled {
@@ -211,7 +215,8 @@ func (e Executor) loadPolicyContext(ctx context.Context, programID string) (asse
 		}
 	}
 	return program, agent.ActionPolicyContext{
-		Program: program, SourceReviewPending: pendingReview, EnabledSchedules: enabledSchedules, Policy: policy,
+		Program: program, SourceReviewPending: pendingReview, EnabledSchedules: enabledSchedules,
+		Approvals: approvals, Policy: policy,
 	}, nil
 }
 

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "rationale": "Planner task-graph refactor extracted complexity helpers, removing one cognitive-complexity finding",
+  "rationale": "approval/decision work extracted helpers and reduced lint debt from 102 to 100 findings",
   "known_issue_totals": {
     "errcheck": 35,
-    "gocognit": 48,
-    "gocyclo": 8,
+    "gocognit": 47,
+    "gocyclo": 7,
     "gosec": 11
   },
   "max_issues_per_file": {
@@ -41,7 +41,6 @@
       "internal/agent/execution/cycle_worker.go": 1,
       "internal/agent/execution/executor.go": 1,
       "internal/agent/execution/executor_adaptive.go": 1,
-      "internal/agent/policy.go": 1,
       "internal/assessment/program.go": 1,
       "internal/recon/catalog.go": 1,
       "internal/recon/dns.go": 2,
@@ -71,7 +70,7 @@
     "gocyclo": {
       "internal/recon/katana.go": 1,
       "internal/store/agent_action_ledger_recovery.go": 1,
-      "internal/store/agent_action_ledger_validation.go": 2,
+      "internal/store/agent_action_ledger_validation.go": 1,
       "internal/store/agent_cycle_jobs.go": 2,
       "internal/store/agent_triage.go": 2
     },
@@ -109,19 +108,16 @@
       },
       "internal/agent/contract/policy.go": {
         "AuthorizeTargets": 40,
-        "NormalizeProgramAgentPolicy": 26
+        "NormalizeProgramAgentPolicy": 24
       },
       "internal/agent/execution/cycle_worker.go": {
         "(AgentCycleWorker).processLease": 29
       },
       "internal/agent/execution/executor.go": {
-        "(Executor).ExecutePlan": 56
+        "(Executor).ExecutePlan": 46
       },
       "internal/agent/execution/executor_adaptive.go": {
-        "(Executor).runAdaptive": 127
-      },
-      "internal/agent/policy.go": {
-        "(ScopeActionPolicy).Authorize": 24
+        "(Executor).runAdaptive": 123
       },
       "internal/assessment/program.go": {
         "(Scope).ActiveURLsForHost": 32
@@ -134,7 +130,7 @@
         "parseDNSXOutput": 38
       },
       "internal/recon/ffuf.go": {
-        "(FFUFCollector).Collect": 28,
+        "(FFUFCollector).Collect": 25,
         "prepareFFUFWordlistFiltered": 21
       },
       "internal/recon/katana.go": {
@@ -145,11 +141,11 @@
         "buildNmapTargets": 30
       },
       "internal/recon/nuclei.go": {
-        "(NucleiCollector).Collect": 24,
+        "(NucleiCollector).Collect": 21,
         "fingerprintTemplateDirectory": 30
       },
       "internal/recon/web.go": {
-        "(WebCollector).Collect": 44,
+        "(WebCollector).Collect": 30,
         "parseTLSXOutput": 31
       },
       "internal/scheduler/daemon.go": {
@@ -210,14 +206,13 @@
     },
     "gocyclo": {
       "internal/recon/katana.go": {
-        "(KatanaCollector).Collect": 20
+        "(KatanaCollector).Collect": 17
       },
       "internal/store/agent_action_ledger_recovery.go": {
         "(*Store).ResolveUncertainAgentAction": 23
       },
       "internal/store/agent_action_ledger_validation.go": {
-        "validateAutomationForAgentActionRun": 20,
-        "validateSerializedAgentActionGrant": 22
+        "validateAutomationForAgentActionRun": 20
       },
       "internal/store/agent_cycle_jobs.go": {
         "(*Store).RenewAgentCycleJobLease": 43,
